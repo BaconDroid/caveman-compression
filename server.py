@@ -61,7 +61,8 @@ def compress():
                 try:
                     compressed = compress_text(text, language=language, preset=preset, mode=mode)
                     model = f"caveman-mlm-{language}"
-                except Exception:
+                except Exception as e:
+                    print(f"Warning: MLM failed for {language}, falling back to NLP: {e}", file=sys.stderr)
                     compressed = compress_text_nlp(text, lang=language)
                     model = f"caveman-nlp-{language}"
             else:

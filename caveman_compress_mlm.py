@@ -188,7 +188,7 @@ def get_mlm_probability(lang_code, sentence, word_idx):
         mask_token_logits = logits[0, mask_token_index[0], :]
         probs = F.softmax(mask_token_logits, dim=0)
 
-        target_tokens = tokenizer.encode(target_word, add_special_tokens=False)
+        target_tokens = tokenizer.encode((" " if word_idx > 0 else "") + target_word, add_special_tokens=False)
         if len(target_tokens) == 0:
             return 0.0
 
@@ -200,7 +200,7 @@ def get_mlm_probability(lang_code, sentence, word_idx):
     except Exception:
         return 0.0
 
-def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, preset="full", mode="sentence", calibrate_from_nlp=True, no_adjacent_removal=False, protect_ner=True):
+def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sentence", calibrate_from_nlp=True, no_adjacent_removal=False, protect_ner=True):
     """
     Apply MLM-based compression by removing words whose predictability exceeds threshold.
     
@@ -266,21 +266,22 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, pre
 
 def _compress_text_mode(text, doc, language, drop_ratio, no_adjacent_removal, protect_ner):
     """Text mode: compress using full text context"""
-    words = text.split()
-    if len(words) < 3:
+    # Use spaCy tokens for consistent indexing
+    tokens = [token.text for token in doc if not token.is_space]
+    if len(tokens) < 3:
         return text
     
-    # Get NER spans
+    # Get NER spans (spaCy token indices)
     ner_spans = set()
     if protect_ner:
         for ent in doc.ents:
             for token in ent:
                 ner_spans.add(token.i)
     
-    # Calculate probabilities for all words
+    # Calculate probabilities for all tokens
     word_probs = []
-    for i, word in enumerate(words):
-        if len(word) <= 2 or not word.isalpha():
+    for i, token in enumerate(tokens):
+        if len(token) <= 2 or not token.isalpha():
             word_probs.append((i, 0.0))
         elif protect_ner and i in ner_spans:
             word_probs.append((i, 0.0))

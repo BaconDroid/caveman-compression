@@ -26,6 +26,9 @@ ARG LANGUAGES=en,fr
 ENV LANGUAGES=${LANGUAGES}
 RUN python download_models.py
 
+# Copy entrypoint
+COPY entrypoint.sh .
+
 # Expose port
 EXPOSE 3000
 
