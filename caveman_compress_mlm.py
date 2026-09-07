@@ -33,7 +33,6 @@ _device = None
 _nlp_models = {}
 
 SUPPORTED_LANGUAGES = {
-<<<<<<< HEAD
     "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
     "en": {"model": "roberta-base", "spacy": "en_core_web_sm"},
     "fr": {"model": "camembert-base", "spacy": "fr_core_news_sm"},
@@ -41,10 +40,6 @@ SUPPORTED_LANGUAGES = {
     "pt": {"model": "neuralmind/bert-base-portuguese-cased", "spacy": "pt_core_news_sm"},
     "tr": {"model": "dbmdz/bert-base-turkish-cased", "spacy": "tr_core_news_sm"},
     "zh": {"model": "bert-base-chinese", "spacy": "zh_core_web_sm"},
-=======
-    "en": {"model": "roberta-base", "spacy": "en_core_web_sm"},
-    "fr": {"model": "camembert-base", "spacy": "fr_core_news_sm"},
->>>>>>> main
 }
 
 def detect_language(text):
@@ -188,7 +183,6 @@ def compress_text(text, language=None, prob_threshold=1e-5, no_adjacent_removal=
             result_parts.append(sent_text)
             continue
         
-<<<<<<< HEAD
         # Get NER spans to protect (convert to sentence-local indices)
         ner_spans = set()
         if protect_ner:
@@ -197,14 +191,6 @@ def compress_text(text, language=None, prob_threshold=1e-5, no_adjacent_removal=
                 for token in ent:
                     # Convert document index to sentence-local index
                     ner_spans.add(token.i - sent_start)
-=======
-        # Get NER spans to protect
-        ner_spans = set()
-        if protect_ner:
-            for ent in sent.ents:
-                for token in ent:
-                    ner_spans.add(token.i)
->>>>>>> main
         
         # Calculate probabilities and mark words for removal
         to_remove = set()
@@ -227,11 +213,8 @@ def compress_text(text, language=None, prob_threshold=1e-5, no_adjacent_removal=
             # Mark for removal if probability exceeds threshold
             if prob >= prob_threshold:
                 if no_adjacent_removal and prev_removed:
-<<<<<<< HEAD
                     # Skip this word but don't set prev_removed to True
                     # so next word can still be removed
-=======
->>>>>>> main
                     continue
                 to_remove.add(i)
                 prev_removed = True
