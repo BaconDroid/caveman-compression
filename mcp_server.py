@@ -2,6 +2,7 @@
 """
 Caveman Compression MCP Server
 Provides text compression tools via MCP protocol.
+Supports MLM (RoBERTa for English, CamemBERT for French) and NLP compression.
 """
 
 import json
@@ -11,7 +12,7 @@ import os
 # Add the caveman-compression directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from caveman_compress_mlm import compress_text
+from caveman_compress_mlm import compress_text, detect_language
 from caveman_compress_nlp import compress_text as compress_text_nlp
 
 # MCP Protocol Constants
@@ -39,7 +40,7 @@ def handle_request(request):
             "tools": [
                 {
                     "name": "caveman_compress",
-                    "description": "Compress text using Caveman compression (MLM for English, NLP for other languages)",
+                    "description": "Compress text using Caveman compression (MLM for English/French, NLP for other languages)",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -49,8 +50,7 @@ def handle_request(request):
                             },
                             "language": {
                                 "type": "string",
-                                "description": "Language code (en, fr, es, de, etc.)",
-                                "default": "en"
+                                "description": "Language code (en, fr, es, de, etc.). Auto-detect if not specified."
                             },
                             "method": {
                                 "type": "string",
@@ -84,16 +84,28 @@ def handle_request(request):
         
         if tool_name == "caveman_compress":
             text = arguments.get("text", "")
-            language = arguments.get("language", "en")
+            language = arguments.get("language")
             method = arguments.get("method", "auto")
             
             try:
-                if method == "mlm" or (method == "auto" and language == "en"):
-                    compressed = compress_text(text)
-                    model = "caveman-mlm-roberta"
+                if method == "nlp":
+                    # Force NLP mode
+                    lang = language or detect_language(text)
+                    compressed = compress_text_nlp(text, language=lang)
+                    model = f"caveman-nlp-{lang}"
+                elif method == "mlm":
+                    # Force MLM mode
+                    compressed = compress_text(text, language=language)
+                    model = f"caveman-mlm"
                 else:
-                    compressed = compress_text_nlp(text, language=language)
-                    model = "caveman-nlp"
+                    # Auto mode: MLM for en/fr, NLP for others
+                    lang = language or detect_language(text)
+                    if lang in ["en", "fr"]:
+                        compressed = compress_text(text, language=lang)
+                        model = f"caveman-mlm-{lang}"
+                    else:
+                        compressed = compress_text_nlp(text, language=lang)
+                        model = f"caveman-nlp-{lang}"
                 
                 return {
                     "content": [
@@ -117,10 +129,16 @@ def handle_request(request):
         elif tool_name == "caveman_stats":
             text = arguments.get("text", "")
             original_size = len(text)
+            language = detect_language(text)
             
             try:
-                compressed_en = compress_text(text)
-                compressed_fr = compress_text_nlp(text, language="fr")
+                # Get compression for detected language
+                if language in ["en", "fr"]:
+                    compressed = compress_text(text, language=language)
+                    model = f"caveman-mlm-{language}"
+                else:
+                    compressed = compress_text_nlp(text, language=language)
+                    model = f"caveman-nlp-{language}"
                 
                 return {
                     "content": [
@@ -128,10 +146,11 @@ def handle_request(request):
                             "type": "text",
                             "text": json.dumps({
                                 "original_size": original_size,
-                                "compressed_en": len(compressed_en),
-                                "compressed_fr": len(compressed_fr),
-                                "ratio_en": len(compressed_en) / original_size if original_size > 0 else 0,
-                                "ratio_fr": len(compressed_fr) / original_size if original_size > 0 else 0
+                                "compressed_size": len(compressed),
+                                "language": language,
+                                "model": model,
+                                "ratio": len(compressed) / original_size if original_size > 0 else 0,
+                                "reduction": f"{(1 - len(compressed) / original_size) * 100:.1f}%" if original_size > 0 else "0%"
                             }, indent=2)
                         }
                     ]
@@ -154,9 +173,11 @@ def main():
     # Load models on startup
     print("Loading models...", file=sys.stderr)
     try:
-        from caveman_compress_mlm import get_models
-        get_models()
-        print("MLM models loaded.", file=sys.stderr)
+        from caveman_compress_mlm import get_mlm_model
+        # Pre-load English and French models
+        get_mlm_model("en")
+        get_mlm_model("fr")
+        print("MLM models loaded (en, fr).", file=sys.stderr)
     except Exception as e:
         print(f"Warning: MLM models failed to load: {e}", file=sys.stderr)
     
