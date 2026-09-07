@@ -8,8 +8,6 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-      # Languages to download models for (comma-separated)
-      # Default: "en,fr" (RoBERTa + CamemBERT)
       - LANGUAGES=en,fr
     restart: unless-stopped
     volumes:
