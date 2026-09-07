@@ -2,59 +2,57 @@
 """
 Startup script for Caveman Compression Docker container.
 Downloads MLM and spaCy models based on LANGUAGES environment variable.
+Supports custom models via CUSTOM_MLM_MODELS and CUSTOM_SPACY_MODELS.
 """
 
 import os
 import sys
 import subprocess
 
-# Default languages
+# Default languages (only official/source models)
 DEFAULT_LANGUAGES = "en,fr"
 
-# Model mappings
+# Official/source MLM models (highest quality)
 MLM_MODELS = {
-    "en": "roberta-base",
-    "fr": "camembert-base",
-    "de": "bert-base-german-cased",
-    "es": "dccuchile/bert-base-spanish-wwm-cased",
-    "it": "dbmdz/bert-base-italian-cased",
-    "pt": "neuralmind/bert-base-portuguese-cased",
-    "nl": "wietsedv/bert-base-dutch-cased",
-    "zh": "bert-base-chinese",
-    "ja": "cl-tohoku/bert-base-japanese",
-    "ko": "snunlp/KR-Finetuned-ColBERT-Ko",
-    "ru": "DeepPavlov/rubert-base-cased",
-    "ar": "asafaya/bert-base-arabic",
+    "en": "roberta-base",    # Meta's RoBERTa (English)
+    "fr": "camembert-base",  # CamemBERT (French RoBERTa)
 }
 
+# Official spaCy models
 SPACY_MODELS = {
     "en": "en_core_web_sm",
     "fr": "fr_core_news_sm",
-    "de": "de_core_news_sm",
-    "es": "es_core_news_sm",
-    "it": "it_core_news_sm",
-    "pt": "pt_core_news_sm",
-    "nl": "nl_core_news_sm",
-    "zh": "zh_core_web_sm",
-    "ja": "ja_core_news_sm",
-    "ko": "ko_core_news_sm",
-    "ru": "ru_core_news_sm",
-    "ar": "ar_core_news_sm",
 }
 
-def download_models(languages):
+def parse_custom_models(env_var, default_models):
+    """Parse custom models from environment variable.
+    
+    Format: "lang1:model1,lang2:model2"
+    Example: "de:bert-base-german-cased,es:dccuchile/bert-base-spanish-wwm-cased"
+    """
+    custom = {}
+    value = os.environ.get(env_var, "")
+    if value:
+        for pair in value.split(","):
+            pair = pair.strip()
+            if ":" in pair:
+                lang, model = pair.split(":", 1)
+                custom[lang.strip()] = model.strip()
+    return {**default_models, **custom}
+
+def download_models(languages, mlm_models, spacy_models):
     """Download MLM and spaCy models for specified languages"""
     lang_list = [lang.strip() for lang in languages.split(",")]
     
     print(f"Downloading models for languages: {', '.join(lang_list)}")
     
     for lang in lang_list:
-        if lang not in MLM_MODELS:
+        if lang not in mlm_models:
             print(f"Warning: No MLM model configured for language '{lang}', skipping")
             continue
         
         # Download MLM model
-        mlm_model = MLM_MODELS[lang]
+        mlm_model = mlm_models[lang]
         print(f"Downloading MLM model '{mlm_model}' for '{lang}'...")
         try:
             if lang == "fr":
@@ -70,7 +68,7 @@ def download_models(languages):
             print(f"  ✗ Failed to download MLM model '{mlm_model}': {e}")
         
         # Download spaCy model
-        spacy_model = SPACY_MODELS.get(lang)
+        spacy_model = spacy_models.get(lang)
         if spacy_model:
             print(f"Downloading spaCy model '{spacy_model}' for '{lang}'...")
             try:
@@ -88,4 +86,14 @@ def download_models(languages):
 if __name__ == "__main__":
     languages = os.environ.get("LANGUAGES", DEFAULT_LANGUAGES)
     print(f"LANGUAGES environment variable: {languages}")
-    download_models(languages)
+    
+    # Parse custom models
+    mlm_models = parse_custom_models("CUSTOM_MLM_MODELS", MLM_MODELS)
+    spacy_models = parse_custom_models("CUSTOM_SPACY_MODELS", SPACY_MODELS)
+    
+    if os.environ.get("CUSTOM_MLM_MODELS"):
+        print(f"Custom MLM models: {os.environ.get('CUSTOM_MLM_MODELS')}")
+    if os.environ.get("CUSTOM_SPACY_MODELS"):
+        print(f"Custom spaCy models: {os.environ.get('CUSTOM_SPACY_MODELS')}")
+    
+    download_models(languages, mlm_models, spacy_models)
