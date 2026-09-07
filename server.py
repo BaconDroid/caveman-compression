@@ -42,9 +42,9 @@ def compress():
     
     text = data['text']
     language = data.get('language')
-    method = data.get('method', 'auto')  # auto, mlm, nlp
     preset = data.get('preset', 'lite')  # lite, full, ultra
     mode = data.get('mode', 'sentence')  # sentence, text
+    method = data.get('method', 'mlm')  # "mlm" (MLM if available, NLP fallback) or "nlp" (force NLP)
     
     try:
         # Auto-detect language if not specified
@@ -55,16 +55,8 @@ def compress():
             # Force NLP mode
             compressed = compress_text_nlp(text, lang=language)
             model = f"caveman-nlp-{language}"
-        elif method == 'mlm':
-            # Force MLM mode with fallback to NLP
-            try:
-                compressed = compress_text(text, language=language, preset=preset, mode=mode)
-                model = f"caveman-mlm-{language}"
-            except Exception:
-                compressed = compress_text_nlp(text, lang=language)
-                model = f"caveman-nlp-{language}"
         else:
-            # Auto mode: try MLM first for supported langs, fallback to NLP
+            # method="mlm" (default): try MLM, fallback to NLP
             if language in MLM_LANGUAGES:
                 try:
                     compressed = compress_text(text, language=language, preset=preset, mode=mode)

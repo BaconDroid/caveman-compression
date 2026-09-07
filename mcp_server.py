@@ -52,12 +52,7 @@ def handle_request(request):
                             },
                             "language": {
                                 "type": "string",
-                                "description": "Language code (en, fr, es, de, etc.). Auto-detect if not specified."
-                            },
-                            "method": {
-                                "type": "string",
-                                "description": "Compression method: auto (MLM when available, NLP fallback), mlm, nlp",
-                                "default": "auto"
+                                "description": "Language code (en, fr, de, etc.). Auto-detect if not specified."
                             },
                             "preset": {
                                 "type": "string",
@@ -70,6 +65,12 @@ def handle_request(request):
                                 "description": "Compression mode: sentence (per sentence, faster), text (full text, more context)",
                                 "default": "sentence",
                                 "enum": ["sentence", "text"]
+                            },
+                            "method": {
+                                "type": "string",
+                                "description": "Compression method: mlm (default, MLM if available, NLP fallback), nlp (force NLP)",
+                                "default": "mlm",
+                                "enum": ["mlm", "nlp"]
                             }
                         },
                         "required": ["text"]
@@ -99,9 +100,9 @@ def handle_request(request):
         if name == "caveman_compress":
             text = arguments.get("text")
             language = arguments.get("language")
-            method = arguments.get("method", "auto")
             preset = arguments.get("preset", "lite")
             mode = arguments.get("mode", "sentence")
+            method = arguments.get("method", "mlm")  # "mlm" (default) or "nlp"
             
             if not text:
                 return {"error": {"code": -32602, "message": "text is required"}}
@@ -112,14 +113,8 @@ def handle_request(request):
                 if method == "nlp":
                     compressed = compress_text_nlp(text, lang=lang)
                     model = f"caveman-nlp-{lang}"
-                elif method == "mlm":
-                    try:
-                        compressed = compress_text(text, language=lang, preset=preset, mode=mode)
-                        model = f"caveman-mlm-{lang}"
-                    except Exception:
-                        compressed = compress_text_nlp(text, lang=lang)
-                        model = f"caveman-nlp-{lang}"
                 else:
+                    # method="mlm" (default): try MLM, fallback to NLP
                     if lang in MLM_LANGUAGES:
                         try:
                             compressed = compress_text(text, language=lang, preset=preset, mode=mode)

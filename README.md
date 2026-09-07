@@ -76,14 +76,13 @@ Presets are dynamically calibrated from NLP compression ratio. The NLP compresso
 |-----------|------|---------|-------------|
 | `text` | string | required | Text to compress |
 | `language` | string | auto | Language code (en, fr, de, etc.) |
-| `method` | string | `auto` | Compression method: `auto`, `mlm`, `nlp` |
 | `preset` | string | `lite` | Compression preset: `lite`, `full`, `ultra` |
 | `mode` | string | `sentence` | Compression mode: `sentence`, `text` |
+| `method` | string | `mlm` | Compression method: `mlm`, `nlp` |
 
 ### Method
 
-- `auto`: Uses MLM when available (en, fr, de, zh, pt, tr, it), NLP fallback for others
-- `mlm`: Force MLM mode (fails if model not available)
+- `mlm` (default): Uses MLM when available (en, fr, de, zh, pt, tr, it), NLP fallback for others
 - `nlp`: Force NLP mode (spaCy-based, no MLM)
 
 ## Examples
