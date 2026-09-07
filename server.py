@@ -48,19 +48,19 @@ def compress():
         
         if method == 'nlp':
             # Force NLP mode
-            compressed = compress_text_nlp(text, language=language)
+            compressed = compress_text_nlp(text, lang=language)
             model = f"caveman-nlp-{language}"
         elif method == 'mlm':
             # Force MLM mode
             compressed = compress_text(text, language=language)
             model = f"caveman-mlm-{language}"
         else:
-            # Auto mode: MLM for en/fr, NLP for others
-            if language in ["en", "fr"]:
+            # Auto mode: MLM for en/fr/de/zh/pt/tr/it, NLP for others
+            if language in ["en", "fr", "de", "zh", "pt", "tr", "it"]:
                 compressed = compress_text(text, language=language)
                 model = f"caveman-mlm-{language}"
             else:
-                compressed = compress_text_nlp(text, language=language)
+                compressed = compress_text_nlp(text, lang=language)
                 model = f"caveman-nlp-{language}"
         
         return jsonify({
