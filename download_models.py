@@ -14,10 +14,13 @@ DEFAULT_LANGUAGES = "en,fr"
 
 # Official/source MLM models (highest quality)
 MLM_MODELS = {
-    "en": "FacebookAI/roberta-base",           # Meta's RoBERTa (English)
-    "fr": "almanach/camembert-base",            # CamemBERT (French RoBERTa)
-    "de": "google-bert/bert-base-german-cased", # Google's German BERT
-    "zh": "google-bert/bert-base-chinese",      # Google's Chinese BERT
+    "en": "FacebookAI/roberta-base",              # Meta's RoBERTa (English)
+    "fr": "almanach/camembert-base",               # CamemBERT (French RoBERTa)
+    "de": "google-bert/bert-base-german-cased",    # Google's German BERT
+    "zh": "google-bert/bert-base-chinese",         # Google's Chinese BERT
+    "pt": "neuralmind/bert-base-portuguese-cased", # NeuralMind's Portuguese BERT
+    "tr": "dbmdz/bert-base-turkish-cased",         # MDZ's Turkish BERT
+    "it": "dbmdz/bert-base-italian-cased",         # MDZ's Italian BERT
 }
 
 # Official spaCy models
@@ -26,6 +29,9 @@ SPACY_MODELS = {
     "fr": "fr_core_news_sm",
     "de": "de_core_news_sm",
     "zh": "zh_core_web_sm",
+    "pt": "pt_core_news_sm",
+    "tr": "tr_core_news_sm",
+    "it": "it_core_news_sm",
 }
 
 def parse_custom_models(env_var, default_models):
