@@ -1,36 +1,50 @@
 FROM python:3.11-slim
 
+# Fixed cache location so models provisioned at build time are found at
+# runtime regardless of which user the process runs as.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/app/.cache/huggingface \
+    TRANSFORMERS_CACHE=/app/.cache/huggingface/transformers
+
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Build dependencies for wheels that must be compiled from source.
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
+# Install Python dependencies (pinned, CPU-only PyTorch).
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application code.
 COPY caveman_compress_mlm.py .
 COPY caveman_compress_nlp.py .
 COPY server.py .
 COPY mcp_server.py .
 COPY download_models.py .
-
-# Create models directory
-RUN mkdir -p /app/models
-
-# Download models during build
-ARG LANGUAGES=en,fr
-ENV LANGUAGES=${LANGUAGES}
-RUN python download_models.py
-
-# Copy entrypoint
 COPY entrypoint.sh .
 
-# Expose port
+# Provision models during the build so the image is self-contained.
+ARG LANGUAGES=en,fr
+ARG CUSTOM_MLM_MODELS=""
+ENV LANGUAGES=${LANGUAGES} CUSTOM_MLM_MODELS=${CUSTOM_MLM_MODELS}
+RUN python download_models.py
+
+# The runtime is offline: all models are already baked into the image.
+ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+
+# Run as a non-root user; model caches stay readable/writable by it.
+RUN chmod +x /app/entrypoint.sh \
+    && useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 3000
 
-# Run server
-CMD ["python", "server.py"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT', '3000') + '/health', timeout=5)"
+
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["gunicorn", "--workers", "2", "--timeout", "300", "server:app"]

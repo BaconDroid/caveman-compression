@@ -2,12 +2,14 @@ version: '3.8'
 
 services:
   caveman-compression:
-    build: .
+    build:
+      context: .
+      args:
+        LANGUAGES: en,fr
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     environment:
-      - PORT=3000
-      - LANGUAGES=en,fr
+      - PORT=${PORT:-3000}
     restart: unless-stopped
     volumes:
       - ./models:/root/.cache  # Cache models between restarts

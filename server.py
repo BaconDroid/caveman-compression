@@ -20,6 +20,26 @@ app = Flask(__name__)
 # Languages with MLM models available (derived from SUPPORTED_LANGUAGES)
 MLM_LANGUAGES = set(SUPPORTED_LANGUAGES.keys())
 
+# Input constraints
+MAX_INPUT_LENGTH = 4096  # characters
+
+# Transport-boundary limit (bytes). Generous headroom over the semantic
+# MAX_INPUT_LENGTH so the character-level check below remains the precise
+# contract; this only rejects oversized request bodies before they are read or
+# parsed.
+MAX_CONTENT_LENGTH = 64 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
+
+PRESETS = ("lite", "full", "ultra")
+MODES = ("sentence", "text")
+METHODS = ("mlm", "nlp")
+
+
+@app.errorhandler(413)
+def request_too_large(e):
+    """Return a stable JSON body for transport-boundary rejections."""
+    return jsonify({'error': 'Request body too large'}), 413
+
 # Cache models on startup
 print("Loading models...", file=sys.stderr)
 try:
@@ -36,21 +56,43 @@ def health():
 
 @app.route('/compress', methods=['POST'])
 def compress():
-    data = request.json
-    if not data or 'text' not in data:
-        return jsonify({'error': 'text is required'}), 400
-    
-    text = data['text']
+    # get_json(silent=True) returns None for missing/malformed JSON instead of
+    # raising, so we can produce a deterministic JSON 400 rather than Flask's
+    # default HTML error page.
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'Invalid request body: expected a JSON object'}), 400
+
+    text = data.get('text')
+    if not isinstance(text, str):
+        return jsonify({'error': "'text' must be a non-empty string"}), 400
+    if not text.strip():
+        return jsonify({'error': "'text' must not be empty"}), 400
+    if len(text) > MAX_INPUT_LENGTH:
+        return jsonify({'error': f"'text' exceeds maximum length of {MAX_INPUT_LENGTH} characters"}), 413
+
     language = data.get('language')
+    if language is not None and not isinstance(language, str):
+        return jsonify({'error': "'language' must be a string"}), 400
+
     preset = data.get('preset', 'lite')  # lite, full, ultra
+    if not isinstance(preset, str) or preset not in PRESETS:
+        return jsonify({'error': f"'preset' must be one of {list(PRESETS)}"}), 400
+
     mode = data.get('mode', 'sentence')  # sentence, text
+    if not isinstance(mode, str) or mode not in MODES:
+        return jsonify({'error': f"'mode' must be one of {list(MODES)}"}), 400
+
     method = data.get('method', 'mlm')  # "mlm" (MLM if available, NLP fallback) or "nlp" (force NLP)
-    
+    if not isinstance(method, str) or method not in METHODS:
+        return jsonify({'error': f"'method' must be one of {list(METHODS)}"}), 400
+
     try:
         # Auto-detect language if not specified
         if language is None:
             language = detect_language(text)
-        
+
+        fallback = False
         if method == 'nlp':
             # Force NLP mode
             compressed = compress_text_nlp(text, lang=language)
@@ -61,26 +103,32 @@ def compress():
                 try:
                     compressed = compress_text(text, language=language, preset=preset, mode=mode)
                     model = f"caveman-mlm-{language}"
-                except Exception as e:
-                    print(f"Warning: MLM failed for {language}, falling back to NLP: {e}", file=sys.stderr)
+                except OSError as e:
+                    # MLM model unavailable for this language: expected fallback.
+                    print(f"Warning: MLM unavailable for {language}, falling back to NLP: {e}", file=sys.stderr)
                     compressed = compress_text_nlp(text, lang=language)
                     model = f"caveman-nlp-{language}"
+                    fallback = True
             else:
                 compressed = compress_text_nlp(text, lang=language)
                 model = f"caveman-nlp-{language}"
-        
+                fallback = True
+
         return jsonify({
             'compressed': compressed,
             'language': language,
             'model': model,
             'preset': preset,
             'mode': mode,
+            'fallback': fallback,
             'original_size': len(text),
             'compressed_size': len(compressed),
             'compression_ratio': len(compressed) / len(text) if text else 0
         })
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        # Log the real error, return a generic body so internals are not leaked.
+        app.logger.error("Compression failed: %s", e, exc_info=True)
+        return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))

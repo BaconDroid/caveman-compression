@@ -12,12 +12,23 @@ from pathlib import Path
 try:
     import spacy
     from spacy.language import Language
-except ImportError:
-    print("Error: spaCy not installed. Install with:", file=sys.stderr)
-    print("  pip install spacy", file=sys.stderr)
-    print("  python -m spacy download en_core_web_sm", file=sys.stderr)
-    print("  python -m spacy download xx_ent_wiki_sm  # for other languages", file=sys.stderr)
-    sys.exit(1)
+except ImportError as e:
+    raise ImportError(
+        "spaCy not installed. Install with:\n"
+        "  pip install spacy\n"
+        "  python -m spacy download en_core_web_sm\n"
+        "  python -m spacy download xx_ent_wiki_sm  # for other languages"
+    ) from e
+
+
+class ModelUnavailableError(OSError):
+    """Raised when a required model (spaCy or MLM) cannot be loaded or configured.
+
+    Subclasses OSError so callers (HTTP/MCP servers) can catch expected
+    availability failures with ``except OSError`` and fall back to an
+    alternative method, while unexpected runtime errors propagate unchanged.
+    """
+
 
 # Language model cache
 _nlp_models = {}
@@ -54,10 +65,11 @@ def get_nlp_model(lang='en'):
         print(f"Warning: Model '{model_name}' not found. Using multilingual model.", file=sys.stderr)
         try:
             nlp = spacy.load('xx_ent_wiki_sm')
-        except OSError:
-            print("Error: No spaCy models found. Install with:", file=sys.stderr)
-            print(f"  python -m spacy download {model_names.get('en', 'en_core_web_sm')}", file=sys.stderr)
-            sys.exit(1)
+        except OSError as e:
+            raise ModelUnavailableError(
+                f"No spaCy models found for language '{lang}'. Install with: "
+                f"python -m spacy download {model_names.get('en', 'en_core_web_sm')}"
+            ) from e
 
     _nlp_models[lang] = nlp
     return nlp
