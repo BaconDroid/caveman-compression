@@ -39,6 +39,7 @@ def calculate_nlp_drop_ratio(text, language):
 
 def get_presets_from_nlp(text, language):
     """Calculate MLM presets based on NLP compression ratio"""
+    import math
     nlp_drop = calculate_nlp_drop_ratio(text, language)
     
     # lite = NLP ratio (rounded to 0.1)
@@ -48,9 +49,9 @@ def get_presets_from_nlp(text, language):
     # ultra = lite * 2 (capped at 0.9)
     ultra = min(0.9, lite * 2)
     
-    # Round to nearest 0.1
-    full = round(full * 10) / 10
-    ultra = round(ultra * 10) / 10
+    # Round UP to nearest 0.1
+    full = math.ceil(full * 10) / 10
+    ultra = math.ceil(ultra * 10) / 10
     
     return {
         "lite": lite,
