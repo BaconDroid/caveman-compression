@@ -33,6 +33,7 @@ except ImportError:
 _models = {}
 _device = None
 _nlp_models = {}
+_fasttext_model = None
 
 # Default supported languages
 DEFAULT_LANGUAGES = {
@@ -62,13 +63,49 @@ def _load_custom_models():
 # Merge default and custom languages
 SUPPORTED_LANGUAGES = {**DEFAULT_LANGUAGES, **_load_custom_models()}
 
+def get_fasttext_model():
+    """Get or load fastText language detection model"""
+    global _fasttext_model
+    if _fasttext_model is None:
+        try:
+            import fasttext
+            # Try to find the model in common locations
+            model_paths = [
+                "/app/models/lid.176.bin",
+                os.path.expanduser("~/.cache/fasttext/lid.176.bin"),
+                "lid.176.bin",
+            ]
+            for path in model_paths:
+                if os.path.exists(path):
+                    _fasttext_model = fasttext.load_model(path)
+                    print(f"fastText model loaded from {path}", file=sys.stderr)
+                    return _fasttext_model
+            print("Warning: fastText model not found, falling back to spaCy", file=sys.stderr)
+        except ImportError:
+            print("Warning: fasttext not installed, falling back to spaCy", file=sys.stderr)
+    return _fasttext_model
+
 def detect_language(text):
-    """Detect language using spaCy or simple heuristics"""
-    # Try spaCy language detection
+    """Detect language using fastText (primary) or spaCy (fallback)"""
+    # Try fastText first (faster and more accurate)
+    ft_model = get_fasttext_model()
+    if ft_model is not None:
+        try:
+            # fastText expects single line text
+            clean_text = text[:1000].replace('\n', ' ')
+            predictions = ft_model.predict(clean_text)
+            lang_code = predictions[0][0].replace('__label__', '')
+            confidence = predictions[1][0]
+            if confidence > 0.3:  # Minimum confidence threshold
+                return lang_code
+        except Exception:
+            pass
+    
+    # Fallback to spaCy
     for lang_code in ["fr", "en"]:
         try:
             nlp = get_nlp_model(lang_code)
-            doc = nlp(text[:1000])  # Limit text length for detection
+            doc = nlp(text[:1000])
             if doc.lang_ == lang_code:
                 return lang_code
         except:
@@ -96,19 +133,17 @@ def get_nlp_model(lang_code):
     return _nlp_models[lang_code]
 
 def get_mlm_model(lang_code):
-    """Get or load MLM model for language"""
+    """Get or load MLM model for language using Auto classes"""
     if lang_code not in _models:
         config = SUPPORTED_LANGUAGES.get(lang_code, SUPPORTED_LANGUAGES["en"])
         model_name = config["model"]
         
         print(f"Loading MLM model '{model_name}' for language '{lang_code}'...", file=sys.stderr)
         
-        if lang_code == "fr":
-            tokenizer = CamembertTokenizer.from_pretrained(model_name)
-            model = CamembertForMaskedLM.from_pretrained(model_name)
-        else:
-            tokenizer = RobertaTokenizer.from_pretrained(model_name)
-            model = RobertaForMaskedLM.from_pretrained(model_name)
+        # Use Auto classes for generic model loading
+        from transformers import AutoTokenizer, AutoModelForMaskedLM
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForMaskedLM.from_pretrained(model_name)
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device)

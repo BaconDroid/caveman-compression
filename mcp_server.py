@@ -11,7 +11,7 @@ import os
 # Add the caveman-compression directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from caveman_compress_mlm import compress_text, detect_language
+from caveman_compress_mlm import compress_text, detect_language, SUPPORTED_LANGUAGES
 from caveman_compress_nlp import compress_text as compress_text_nlp
 
 # MCP Protocol Constants
@@ -19,10 +19,13 @@ MCP_VERSION = "2024-11-05"
 
 # Compression presets: name -> prob_threshold
 COMPRESSION_PRESETS = {
-    "light": 1e-2,      # Light compression, keeps most words
-    "medium": 1e-3,     # Medium compression
-    "aggressive": 1e-5, # Aggressive compression
+    "lite": 0.95,       # Keep articles, full sentences (~30% dropped)
+    "full": 0.5,        # Drop articles, filler, fragments OK (default)
+    "ultra": 0.01,      # Maximum compression
 }
+
+# Languages with MLM models available (derived from SUPPORTED_LANGUAGES)
+MLM_LANGUAGES = set(SUPPORTED_LANGUAGES.keys())
 
 def handle_request(request):
     """Handle MCP request"""
@@ -65,13 +68,13 @@ def handle_request(request):
                             },
                             "preset": {
                                 "type": "string",
-                                "description": "Compression preset: light, medium, aggressive",
-                                "default": "light",
-                                "enum": ["light", "medium", "aggressive"]
+                                "description": "Compression preset: lite, full, ultra",
+                                "default": "full",
+                                "enum": ["lite", "full", "ultra"]
                             },
                             "threshold": {
                                 "type": "number",
-                                "description": "Custom probability threshold (overrides preset). Range: 1e-7 to 1e-1. Higher = less aggressive."
+                                "description": "Custom probability threshold (overrides preset). Range: 0.0 to 1.0. Higher = less aggressive."
                             }
                         },
                         "required": ["text"]
@@ -102,7 +105,7 @@ def handle_request(request):
             text = arguments.get("text")
             language = arguments.get("language")
             method = arguments.get("method", "auto")
-            preset = arguments.get("preset", "light")
+            preset = arguments.get("preset", "full")
             threshold = arguments.get("threshold")
             
             if not text:
@@ -110,9 +113,9 @@ def handle_request(request):
             
             # Get threshold from preset or use custom value
             if threshold is not None:
-                threshold = max(1e-7, min(1e-1, float(threshold)))
+                threshold = max(0.0, min(1.0, float(threshold)))
             else:
-                threshold = COMPRESSION_PRESETS.get(preset, COMPRESSION_PRESETS["light"])
+                threshold = COMPRESSION_PRESETS.get(preset, COMPRESSION_PRESETS["full"])
             
             try:
                 lang = language or detect_language(text)
