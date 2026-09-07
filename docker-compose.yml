@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  caveman-compression:
+    build: .
+    container_name: caveman-compression
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      # Specify languages to download models for (comma-separated)
+      # Default: "en,fr"
+      # Supported: en, fr, de, es, it, pt, nl, zh, ja, ko, ru, ar
+      - LANGUAGES=en,fr
+    restart: unless-stopped
+    volumes:
+      # Cache models between restarts
+      - ./models:/root/.cache
