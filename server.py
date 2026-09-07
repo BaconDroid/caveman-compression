@@ -44,6 +44,7 @@ def compress():
     language = data.get('language')
     method = data.get('method', 'auto')  # auto, mlm, nlp
     preset = data.get('preset', 'full')  # lite, full, ultra
+    mode = data.get('mode', 'sentence')  # sentence, text
     drop_ratio = data.get('drop_ratio')  # Override preset if specified (0.0-1.0)
     
     try:
@@ -58,7 +59,7 @@ def compress():
         elif method == 'mlm':
             # Force MLM mode with fallback to NLP
             try:
-                compressed = compress_text(text, language=language, drop_ratio=drop_ratio, preset=preset, calibrate_from_nlp=(drop_ratio is None))
+                compressed = compress_text(text, language=language, drop_ratio=drop_ratio, preset=preset, mode=mode, calibrate_from_nlp=(drop_ratio is None))
                 model = f"caveman-mlm-{language}"
             except Exception:
                 compressed = compress_text_nlp(text, lang=language)
@@ -67,7 +68,7 @@ def compress():
             # Auto mode: try MLM first for supported langs, fallback to NLP
             if language in MLM_LANGUAGES:
                 try:
-                    compressed = compress_text(text, language=language, drop_ratio=drop_ratio, preset=preset, calibrate_from_nlp=(drop_ratio is None))
+                    compressed = compress_text(text, language=language, drop_ratio=drop_ratio, preset=preset, mode=mode, calibrate_from_nlp=(drop_ratio is None))
                     model = f"caveman-mlm-{language}"
                 except Exception:
                     compressed = compress_text_nlp(text, lang=language)
@@ -81,6 +82,7 @@ def compress():
             'language': language,
             'model': model,
             'preset': preset,
+            'mode': mode,
             'drop_ratio': drop_ratio,
             'original_size': len(text),
             'compressed_size': len(compressed),

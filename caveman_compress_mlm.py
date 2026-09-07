@@ -200,7 +200,7 @@ def get_mlm_probability(lang_code, sentence, word_idx):
     except Exception:
         return 0.0
 
-def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, preset="full", calibrate_from_nlp=True, no_adjacent_removal=False, protect_ner=True):
+def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, preset="full", mode="sentence", calibrate_from_nlp=True, no_adjacent_removal=False, protect_ner=True):
     """
     Apply MLM-based compression by removing words whose predictability exceeds threshold.
     
@@ -210,7 +210,8 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, pre
         prob_threshold: Absolute probability threshold for removal (legacy)
         drop_ratio: Fraction of words to drop (0.0-1.0). If set, uses adaptive threshold.
         preset: Preset name (lite/full/ultra) used with calibrate_from_nlp
-        calibrate_from_nlp: If True, calibrate drop_ratio from NLP compression per sentence
+        mode: "sentence" (NLP/MLM per sentence) or "text" (NLP/MLM on full text)
+        calibrate_from_nlp: If True, calibrate drop_ratio from NLP compression
         no_adjacent_removal: If True, don't remove adjacent words
         protect_ner: If True, don't remove named entities
     """
@@ -228,7 +229,101 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, pre
     # Get MLM model
     get_mlm_model(language)
     
-    # Process sentence by sentence
+    # Calculate drop_ratio from NLP if needed
+    if drop_ratio is None and calibrate_from_nlp:
+        import math
+        try:
+            from caveman_compress_nlp import compress_text as compress_text_nlp
+            
+            if mode == "text":
+                # NLP on full text
+                nlp_result = compress_text_nlp(text, lang=language)
+                nlp_kept_ratio = len(nlp_result) / len(text) if text else 1.0
+                nlp_drop = 1.0 - nlp_kept_ratio
+                nlp_drop = round(nlp_drop * 10) / 10
+                
+                if preset == "lite":
+                    drop_ratio = nlp_drop
+                elif preset == "full":
+                    drop_ratio = min(0.9, math.ceil(nlp_drop * 1.5 * 10) / 10)
+                elif preset == "ultra":
+                    drop_ratio = min(0.9, math.ceil(nlp_drop * 2 * 10) / 10)
+                else:
+                    drop_ratio = nlp_drop
+        except Exception:
+            drop_ratio = 0.3  # fallback
+    
+    if drop_ratio is None:
+        drop_ratio = 0.3  # default fallback
+    
+    # Process based on mode
+    if mode == "text":
+        # Text mode: NLP on full text, MLM on full text context
+        return _compress_text_mode(text, doc, language, drop_ratio, no_adjacent_removal, protect_ner)
+    else:
+        # Sentence mode: NLP per sentence, MLM per sentence context (default)
+        return _compress_sentence_mode(text, doc, language, preset, drop_ratio, no_adjacent_removal, protect_ner)
+
+def _compress_text_mode(text, doc, language, drop_ratio, no_adjacent_removal, protect_ner):
+    """Text mode: compress using full text context"""
+    words = text.split()
+    if len(words) < 3:
+        return text
+    
+    # Get NER spans
+    ner_spans = set()
+    if protect_ner:
+        for ent in doc.ents:
+            for token in ent:
+                ner_spans.add(token.i)
+    
+    # Calculate probabilities for all words
+    word_probs = []
+    for i, word in enumerate(words):
+        if len(word) <= 2 or not word.isalpha():
+            word_probs.append((i, 0.0))
+        elif protect_ner and i in ner_spans:
+            word_probs.append((i, 0.0))
+        else:
+            prob = get_mlm_probability(language, text, i)
+            word_probs.append((i, prob))
+    
+    # Calculate how many words to drop
+    num_to_drop = int(len(words) * drop_ratio)
+    
+    # Sort by probability (highest first = most predictable)
+    sortable_probs = [(i, p) for i, p in word_probs if p > 0]
+    sortable_probs.sort(key=lambda x: x[1], reverse=True)
+    
+    # Drop the most predictable words
+    to_remove = set()
+    for i, p in sortable_probs:
+        if len(to_remove) >= num_to_drop:
+            break
+        to_remove.add(i)
+    
+    # Apply no_adjacent_removal constraint
+    if no_adjacent_removal:
+        filtered_remove = set()
+        prev_removed = False
+        for i in range(len(words)):
+            if i in to_remove:
+                if not prev_removed:
+                    filtered_remove.add(i)
+                    prev_removed = True
+            else:
+                prev_removed = False
+        to_remove = filtered_remove
+    
+    # Reconstruct
+    compressed_words = [w for i, w in enumerate(words) if i not in to_remove]
+    return " ".join(compressed_words)
+
+def _compress_sentence_mode(text, doc, language, preset, drop_ratio, no_adjacent_removal, protect_ner):
+    """Sentence mode: compress per sentence (default)"""
+    import math
+    from caveman_compress_nlp import compress_text as compress_text_nlp
+    
     result_parts = []
     
     for sent in doc.sents:
@@ -237,38 +332,30 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, pre
             continue
         
         words = sent_text.split()
-        if len(words) < 3:  # Don't compress very short sentences
+        if len(words) < 3:
             result_parts.append(sent_text)
             continue
         
         # Calculate drop_ratio for this sentence
         sent_drop_ratio = drop_ratio
-        if sent_drop_ratio is None and calibrate_from_nlp:
-            # Calibrate from NLP compression of this sentence
-            try:
-                from caveman_compress_nlp import compress_text as compress_text_nlp
-                nlp_result = compress_text_nlp(sent_text, lang=language)
-                nlp_kept_ratio = len(nlp_result) / len(sent_text) if sent_text else 1.0
-                nlp_drop = 1.0 - nlp_kept_ratio
-                nlp_drop = round(nlp_drop * 10) / 10  # Round to 0.1
-                
-                # Apply preset formula
-                import math
-                if preset == "lite":
-                    sent_drop_ratio = nlp_drop
-                elif preset == "full":
-                    sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 1.5 * 10) / 10)
-                elif preset == "ultra":
-                    sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 2 * 10) / 10)
-                else:
-                    sent_drop_ratio = nlp_drop
-            except Exception:
-                sent_drop_ratio = 0.3  # fallback
+        try:
+            nlp_result = compress_text_nlp(sent_text, lang=language)
+            nlp_kept_ratio = len(nlp_result) / len(sent_text) if sent_text else 1.0
+            nlp_drop = 1.0 - nlp_kept_ratio
+            nlp_drop = round(nlp_drop * 10) / 10
+            
+            if preset == "lite":
+                sent_drop_ratio = nlp_drop
+            elif preset == "full":
+                sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 1.5 * 10) / 10)
+            elif preset == "ultra":
+                sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 2 * 10) / 10)
+            else:
+                sent_drop_ratio = nlp_drop
+        except Exception:
+            sent_drop_ratio = drop_ratio  # fallback to global
         
-        if sent_drop_ratio is None:
-            sent_drop_ratio = 0.3  # default fallback
-        
-        # Get NER spans to protect (convert to sentence-local indices)
+        # Get NER spans
         ner_spans = set()
         if protect_ner:
             sent_start = sent.start
@@ -276,44 +363,32 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, pre
                 for token in ent:
                     ner_spans.add(token.i - sent_start)
         
-        # Calculate probabilities for all words
+        # Calculate probabilities
         word_probs = []
-        protected_count = 0
         for i, word in enumerate(words):
             if len(word) <= 2 or not word.isalpha():
-                word_probs.append((i, 0.0))  # Never remove short words/punctuation
-                protected_count += 1
+                word_probs.append((i, 0.0))
             elif protect_ner and i in ner_spans:
-                word_probs.append((i, 0.0))  # Never remove NER
-                protected_count += 1
+                word_probs.append((i, 0.0))
             else:
                 prob = get_mlm_probability(language, sent_text, i)
                 word_probs.append((i, prob))
         
-        # Determine threshold
-        if sent_drop_ratio is not None:
-            # Adaptive mode: calculate how many words to drop from TOTAL words
-            total_words = len(words)
-            num_to_drop = int(total_words * sent_drop_ratio)
-            
-            # Sort by probability (highest first = most predictable)
-            sortable_probs = [(i, p) for i, p in word_probs if p > 0]
-            sortable_probs.sort(key=lambda x: x[1], reverse=True)
-            
-            # Drop the most predictable words up to num_to_drop
-            to_remove = set()
-            for i, p in sortable_probs:
-                if len(to_remove) >= num_to_drop:
-                    break
-                to_remove.add(i)
-        else:
-            # Fixed threshold mode (legacy)
-            to_remove = set()
-            for i, prob in word_probs:
-                if prob >= prob_threshold:
-                    to_remove.add(i)
+        # Calculate how many words to drop
+        num_to_drop = int(len(words) * sent_drop_ratio)
         
-        # Apply no_adjacent_removal constraint
+        # Sort by probability
+        sortable_probs = [(i, p) for i, p in word_probs if p > 0]
+        sortable_probs.sort(key=lambda x: x[1], reverse=True)
+        
+        # Drop the most predictable words
+        to_remove = set()
+        for i, p in sortable_probs:
+            if len(to_remove) >= num_to_drop:
+                break
+            to_remove.add(i)
+        
+        # Apply no_adjacent_removal
         if no_adjacent_removal:
             filtered_remove = set()
             prev_removed = False
@@ -326,7 +401,7 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, pre
                     prev_removed = False
             to_remove = filtered_remove
         
-        # Reconstruct sentence without removed words
+        # Reconstruct
         compressed_words = [w for i, w in enumerate(words) if i not in to_remove]
         result_parts.append(" ".join(compressed_words))
     

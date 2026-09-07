@@ -99,6 +99,7 @@ def handle_request(request):
             language = arguments.get("language")
             method = arguments.get("method", "auto")
             preset = arguments.get("preset", "full")
+            mode = arguments.get("mode", "sentence")  # sentence, text
             drop_ratio = arguments.get("drop_ratio")
             
             if not text:
@@ -111,18 +112,16 @@ def handle_request(request):
                     compressed = compress_text_nlp(text, lang=lang)
                     model = f"caveman-nlp-{lang}"
                 elif method == "mlm":
-                    # Force MLM with NLP fallback
                     try:
-                        compressed = compress_text(text, language=lang, drop_ratio=drop_ratio, preset=preset, calibrate_from_nlp=(drop_ratio is None))
+                        compressed = compress_text(text, language=lang, drop_ratio=drop_ratio, preset=preset, mode=mode, calibrate_from_nlp=(drop_ratio is None))
                         model = f"caveman-mlm-{lang}"
                     except Exception:
                         compressed = compress_text_nlp(text, lang=lang)
                         model = f"caveman-nlp-{lang}"
                 else:
-                    # Auto: MLM for supported langs, NLP for others
                     if lang in MLM_LANGUAGES:
                         try:
-                            compressed = compress_text(text, language=lang, drop_ratio=drop_ratio, preset=preset, calibrate_from_nlp=(drop_ratio is None))
+                            compressed = compress_text(text, language=lang, drop_ratio=drop_ratio, preset=preset, mode=mode, calibrate_from_nlp=(drop_ratio is None))
                             model = f"caveman-mlm-{lang}"
                         except Exception:
                             compressed = compress_text_nlp(text, lang=lang)
@@ -137,6 +136,7 @@ def handle_request(request):
                         "language": lang,
                         "model": model,
                         "preset": preset,
+                        "mode": mode,
                         "drop_ratio": drop_ratio,
                         "original_size": len(text),
                         "compressed_size": len(compressed),
