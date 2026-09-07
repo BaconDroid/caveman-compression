@@ -14,24 +14,24 @@ DEFAULT_LANGUAGES = "en,fr"
 
 # Official/source MLM models (highest quality)
 MLM_MODELS = {
-    "en": "FacebookAI/roberta-base",              # Meta's RoBERTa (English)
-    "fr": "almanach/camembert-base",               # CamemBERT (French RoBERTa)
-    "de": "google-bert/bert-base-german-cased",    # Google's German BERT
-    "zh": "google-bert/bert-base-chinese",         # Google's Chinese BERT
+    "de": "bert-base-german-cased",              # Google's German BERT
+    "en": "roberta-base",                         # Meta's RoBERTa (English)
+    "fr": "camembert-base",                       # CamemBERT (French RoBERTa)
+    "it": "dbmdz/bert-base-italian-cased",        # MDZ's Italian BERT
     "pt": "neuralmind/bert-base-portuguese-cased", # NeuralMind's Portuguese BERT
-    "tr": "dbmdz/bert-base-turkish-cased",         # MDZ's Turkish BERT
-    "it": "dbmdz/bert-base-italian-cased",         # MDZ's Italian BERT
+    "tr": "dbmdz/bert-base-turkish-cased",        # MDZ's Turkish BERT
+    "zh": "bert-base-chinese",                    # Google's Chinese BERT
 }
 
 # Official spaCy models
 SPACY_MODELS = {
+    "de": "de_core_news_sm",
     "en": "en_core_web_sm",
     "fr": "fr_core_news_sm",
-    "de": "de_core_news_sm",
-    "zh": "zh_core_web_sm",
+    "it": "it_core_news_sm",
     "pt": "pt_core_news_sm",
     "tr": "tr_core_news_sm",
-    "it": "it_core_news_sm",
+    "zh": "zh_core_web_sm",
 }
 
 def parse_custom_models(env_var, default_models):

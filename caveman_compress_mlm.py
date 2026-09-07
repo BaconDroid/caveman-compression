@@ -33,13 +33,13 @@ _device = None
 _nlp_models = {}
 
 SUPPORTED_LANGUAGES = {
-    "en": {"model": "FacebookAI/roberta-base", "spacy": "en_core_web_sm"},
-    "fr": {"model": "almanach/camembert-base", "spacy": "fr_core_news_sm"},
-    "de": {"model": "google-bert/bert-base-german-cased", "spacy": "de_core_news_sm"},
-    "zh": {"model": "google-bert/bert-base-chinese", "spacy": "zh_core_web_sm"},
+    "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
+    "en": {"model": "roberta-base", "spacy": "en_core_web_sm"},
+    "fr": {"model": "camembert-base", "spacy": "fr_core_news_sm"},
+    "it": {"model": "dbmdz/bert-base-italian-cased", "spacy": "it_core_news_sm"},
     "pt": {"model": "neuralmind/bert-base-portuguese-cased", "spacy": "pt_core_news_sm"},
     "tr": {"model": "dbmdz/bert-base-turkish-cased", "spacy": "tr_core_news_sm"},
-    "it": {"model": "dbmdz/bert-base-italian-cased", "spacy": "it_core_news_sm"},
+    "zh": {"model": "bert-base-chinese", "spacy": "zh_core_web_sm"},
 }
 
 def detect_language(text):
