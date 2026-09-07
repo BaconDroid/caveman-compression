@@ -91,8 +91,13 @@ The MCP server is configured in `~/.config/opencode/opencode.json`:
     "caveman": {
       "type": "local",
       "command": [
+<<<<<<< HEAD
         "<path-to-repo>/venv/bin/python",
         "<path-to-repo>/mcp_server.py"
+=======
+        "/var/home/bacon/Projects/caveman-compression/venv/bin/python",
+        "/var/home/bacon/Projects/caveman-compression/mcp_server.py"
+>>>>>>> main
       ],
       "enabled": true
     }
@@ -100,6 +105,7 @@ The MCP server is configured in `~/.config/opencode/opencode.json`:
 }
 ```
 
+<<<<<<< HEAD
 Replace `<path-to-repo>` with the absolute path to your cloned repository.
 
 ## Adding More Languages
@@ -122,6 +128,28 @@ To add support for another language:
 
 3. Update the `get_mlm_model` function to handle the new model type.
 
+=======
+## Adding More Languages
+
+To add support for another language:
+
+1. Add the model config to `SUPPORTED_LANGUAGES` in `caveman_compress_mlm.py`:
+   ```python
+   SUPPORTED_LANGUAGES = {
+       "en": {"model": "roberta-base", "spacy": "en_core_web_sm"},
+       "fr": {"model": "camembert-base", "spacy": "fr_core_news_sm"},
+       "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
+   }
+   ```
+
+2. Add the model imports in `caveman_compress_mlm.py`:
+   ```python
+   from transformers import BertForMaskedLM, BertTokenizer
+   ```
+
+3. Update the `get_mlm_model` function to handle the new model type.
+
+>>>>>>> main
 4. Download the spaCy model:
    ```bash
    python -m spacy download de_core_news_sm

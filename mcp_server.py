@@ -91,13 +91,18 @@ def handle_request(request):
                 if method == "nlp":
                     # Force NLP mode
                     lang = language or detect_language(text)
+<<<<<<< HEAD
                     compressed = compress_text_nlp(text, lang=lang)
+=======
+                    compressed = compress_text_nlp(text, language=lang)
+>>>>>>> main
                     model = f"caveman-nlp-{lang}"
                 elif method == "mlm":
                     # Force MLM mode
                     compressed = compress_text(text, language=language)
                     model = f"caveman-mlm"
                 else:
+<<<<<<< HEAD
                     # Auto mode: MLM for en/fr/de/zh/pt/tr/it, NLP for others
                     lang = language or detect_language(text)
                     if lang in ["en", "fr", "de", "zh", "pt", "tr", "it"]:
@@ -105,6 +110,15 @@ def handle_request(request):
                         model = f"caveman-mlm-{lang}"
                     else:
                         compressed = compress_text_nlp(text, lang=lang)
+=======
+                    # Auto mode: MLM for en/fr, NLP for others
+                    lang = language or detect_language(text)
+                    if lang in ["en", "fr"]:
+                        compressed = compress_text(text, language=lang)
+                        model = f"caveman-mlm-{lang}"
+                    else:
+                        compressed = compress_text_nlp(text, language=lang)
+>>>>>>> main
                         model = f"caveman-nlp-{lang}"
                 
                 return {
@@ -166,7 +180,11 @@ def handle_request(request):
                     "isError": True
                 }
     
+<<<<<<< HEAD
     return {"error": {"code": -32601, "message": "Method not found"}}
+=======
+    return {"error": "Method not found"}
+>>>>>>> main
 
 def main():
     """Main MCP server loop"""
