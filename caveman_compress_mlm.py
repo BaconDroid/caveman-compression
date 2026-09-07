@@ -251,22 +251,34 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, no_
         
         # Calculate probabilities for all words
         word_probs = []
+        protected_count = 0
         for i, word in enumerate(words):
             if len(word) <= 2 or not word.isalpha():
                 word_probs.append((i, 0.0))  # Never remove short words/punctuation
+                protected_count += 1
             elif protect_ner and i in ner_spans:
                 word_probs.append((i, 0.0))  # Never remove NER
+                protected_count += 1
             else:
                 prob = get_mlm_probability(language, sent_text, i)
                 word_probs.append((i, prob))
         
         # Determine threshold
         if drop_ratio is not None:
-            # Adaptive mode: sort by probability, drop top N%
+            # Adaptive mode: calculate how many words to drop from TOTAL words
+            total_words = len(words)
+            num_to_drop = int(total_words * drop_ratio)
+            
+            # Sort by probability (highest first = most predictable)
             sortable_probs = [(i, p) for i, p in word_probs if p > 0]
             sortable_probs.sort(key=lambda x: x[1], reverse=True)
-            num_to_drop = int(len(sortable_probs) * drop_ratio)
-            to_remove = set(i for i, _ in sortable_probs[:num_to_drop])
+            
+            # Drop the most predictable words up to num_to_drop
+            to_remove = set()
+            for i, p in sortable_probs:
+                if len(to_remove) >= num_to_drop:
+                    break
+                to_remove.add(i)
         else:
             # Fixed threshold mode (legacy)
             to_remove = set()
