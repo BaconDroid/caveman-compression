@@ -19,9 +19,9 @@ app = Flask(__name__)
 
 # Compression presets: name -> prob_threshold
 COMPRESSION_PRESETS = {
-    "lite": 0.95,       # Keep articles, full sentences (~30% dropped)
-    "full": 0.5,        # Drop articles, filler, fragments OK (default)
-    "ultra": 0.01,      # Maximum compression
+    "lite": 0.7,        # ~30% dropped, keeps structure
+    "full": 0.3,        # ~50% dropped, fragments OK (default)
+    "ultra": 0.001,     # ~80% dropped, maximum compression
 }
 
 # Languages with MLM models available (derived from SUPPORTED_LANGUAGES)
