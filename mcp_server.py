@@ -56,18 +56,20 @@ def handle_request(request):
                             },
                             "method": {
                                 "type": "string",
-                                "description": "Compression method: auto, mlm, nlp",
+                                "description": "Compression method: auto (MLM when available, NLP fallback), mlm, nlp",
                                 "default": "auto"
                             },
                             "preset": {
                                 "type": "string",
-                                "description": "Compression preset: lite, full, ultra (auto-calibrated from NLP per sentence)",
-                                "default": "full",
+                                "description": "Compression preset: lite (NLP level), full (NLP×1.5), ultra (NLP×2)",
+                                "default": "lite",
                                 "enum": ["lite", "full", "ultra"]
                             },
-                            "drop_ratio": {
-                                "type": "number",
-                                "description": "Custom drop ratio (overrides preset). Range: 0.0 to 1.0. E.g., 0.3 = drop 30% most predictable words."
+                            "mode": {
+                                "type": "string",
+                                "description": "Compression mode: sentence (per sentence, faster), text (full text, more context)",
+                                "default": "sentence",
+                                "enum": ["sentence", "text"]
                             }
                         },
                         "required": ["text"]
@@ -98,9 +100,8 @@ def handle_request(request):
             text = arguments.get("text")
             language = arguments.get("language")
             method = arguments.get("method", "auto")
-            preset = arguments.get("preset", "full")
-            mode = arguments.get("mode", "sentence")  # sentence, text
-            drop_ratio = arguments.get("drop_ratio")
+            preset = arguments.get("preset", "lite")
+            mode = arguments.get("mode", "sentence")
             
             if not text:
                 return {"error": {"code": -32602, "message": "text is required"}}
@@ -113,7 +114,7 @@ def handle_request(request):
                     model = f"caveman-nlp-{lang}"
                 elif method == "mlm":
                     try:
-                        compressed = compress_text(text, language=lang, drop_ratio=drop_ratio, preset=preset, mode=mode, calibrate_from_nlp=(drop_ratio is None))
+                        compressed = compress_text(text, language=lang, preset=preset, mode=mode)
                         model = f"caveman-mlm-{lang}"
                     except Exception:
                         compressed = compress_text_nlp(text, lang=lang)
@@ -121,7 +122,7 @@ def handle_request(request):
                 else:
                     if lang in MLM_LANGUAGES:
                         try:
-                            compressed = compress_text(text, language=lang, drop_ratio=drop_ratio, preset=preset, mode=mode, calibrate_from_nlp=(drop_ratio is None))
+                            compressed = compress_text(text, language=lang, preset=preset, mode=mode)
                             model = f"caveman-mlm-{lang}"
                         except Exception:
                             compressed = compress_text_nlp(text, lang=lang)
@@ -137,7 +138,6 @@ def handle_request(request):
                         "model": model,
                         "preset": preset,
                         "mode": mode,
-                        "drop_ratio": drop_ratio,
                         "original_size": len(text),
                         "compressed_size": len(compressed),
                         "compression_ratio": len(compressed) / len(text) if text else 0

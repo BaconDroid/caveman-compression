@@ -1,160 +1,214 @@
-# Caveman Compression - Forked
+# opencode-caveman-compress
 
-Forked from [wilpel/caveman-compression](https://github.com/wilpel/caveman-compression) with additions for OpenCode integration.
+MLM-based text compression for LLM context optimization. Fork of [wilpel/caveman-compression](https://github.com/wilpel/caveman-compression) with additional features.
 
-## Additions
+**Why use many token when few token do trick?**
 
-- **CamemBERT support** for French MLM compression
-- **MCP server** for OpenCode integration
-- **HTTP API server** for remote compression
-- **Docker support** for Unraid deployment
-- **Auto language detection** (en, fr, es, de, etc.)
+## Features
 
-## Models
+- **MLM compression** using masked language models (RoBERTa for English, CamemBERT for French)
+- **NLP fallback** for languages without MLM models (spaCy-based)
+- **Auto language detection** via fastText (170+ languages)
+- **Dynamic presets** calibrated from NLP compression ratio
+- **Sentence or text mode** for different compression contexts
+- **Custom MLM models** via environment variable
+- **HTTP API** and **MCP server** for integration
+- **Docker support** for easy deployment
 
-| Language | Model | Type | Notes |
-|----------|-------|------|-------|
-| English | RoBERTa | MLM | roberta-base |
-| French | CamemBERT | MLM | camembert-base |
-| Other | spaCy | NLP | Language-specific models |
+## Quick Start
 
-## Installation
-
-### Local (Laptop)
-
-```bash
-# Clone the repo
-git clone https://github.com/BaconDroid/caveman-compression.git
-cd caveman-compression
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements-mlm.txt flask
-
-# Download spaCy models
-python -m spacy download en_core_web_sm
-python -m spacy download fr_core_news_sm
-
-# Test
-./venv/bin/python caveman_compress_mlm.py compress "Test text"
-```
-
-### Docker (Unraid)
+### Docker
 
 ```bash
 # Build and run
-docker-compose up -d
-
-# Or build manually
 docker build -t caveman-compression .
-docker run -p 3000:3000 caveman-compression
+docker run -p 3000:3000 -e LANGUAGES=en,fr caveman-compression
+
+# Or with docker-compose
+docker-compose up -d
 ```
 
-## Usage
-
-### CLI
+### API Usage
 
 ```bash
-# Compress English text (MLM)
-./venv/bin/python caveman_compress_mlm.py compress "Your text here"
-
-# Compress French text (MLM)
-./venv/bin/python caveman_compress_mlm.py compress -l fr "Votre texte ici"
-
-# Compress with NLP (lighter, less aggressive)
-./venv/bin/python caveman_compress_nlp.py compress "Your text here"
-./venv/bin/python caveman_compress_nlp.py compress -l fr "Votre texte ici"
-```
-
-### HTTP API
-
-```bash
-# Start server
-./venv/bin/python server.py
-
-# Compress text
+# Compress text (default: preset=lite, mode=sentence)
 curl -X POST http://localhost:3000/compress \
   -H "Content-Type: application/json" \
-  -d '{"text": "Your text here", "language": "en"}'
+  -d '{"text": "The reason your React component is re-rendering is likely because you are creating a new object reference on each render cycle."}'
+
+# Response
+{
+  "compressed": "reason your React is re-rendering is likely creating a object reference on each render cycle.",
+  "language": "en",
+  "model": "caveman-mlm-en",
+  "preset": "lite",
+  "mode": "sentence",
+  "original_size": 127,
+  "compressed_size": 93,
+  "compression_ratio": 0.73
+}
 ```
 
-### MCP (OpenCode)
+## Presets
 
-The MCP server is configured in `~/.config/opencode/opencode.json`:
+Presets are dynamically calibrated from NLP compression ratio. The NLP compressor removes stop words, determiners, and auxiliaries. MLM presets are calculated relative to NLP:
+
+| Preset | Formula | Effect |
+|--------|---------|--------|
+| `lite` | = NLP | Similar to NLP compression (~30% removed) |
+| `full` | = NLP × 1.5 | More aggressive (~45% removed) |
+| `ultra` | = NLP × 2 | Maximum compression (~60% removed) |
+
+**Default:** `lite` (fast, simple, effective)
+
+## Modes
+
+| Mode | NLP Context | MLM Context | Performance | Use Case |
+|------|-------------|-------------|-------------|----------|
+| `sentence` | Per sentence | Word in sentence | Fast | Default, preserves structure |
+| `text` | Full text | Word in text | Slower | Long texts, global context |
+
+**Default:** `sentence`
+
+## API Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `text` | string | required | Text to compress |
+| `language` | string | auto | Language code (en, fr, de, etc.) |
+| `method` | string | `auto` | Compression method: `auto`, `mlm`, `nlp` |
+| `preset` | string | `lite` | Compression preset: `lite`, `full`, `ultra` |
+| `mode` | string | `sentence` | Compression mode: `sentence`, `text` |
+
+### Method
+
+- `auto`: Uses MLM when available (en, fr, de, zh, pt, tr, it), NLP fallback for others
+- `mlm`: Force MLM mode (fails if model not available)
+- `nlp`: Force NLP mode (spaCy-based, no MLM)
+
+## Examples
+
+### French
+
+```bash
+curl -X POST http://localhost:3000/compress \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Bonjour, je travaille sur un projet complexe qui nécessite une attention particulière aux détails et une compréhension approfondie des exigences du client.", "preset": "lite"}'
+
+# Response
+{
+  "compressed": "Bonjour, je travaille sur un projet complexe nécessite particulière détails et compréhension approfondie exigences du client.",
+  "language": "fr",
+  "model": "caveman-mlm-fr",
+  "preset": "lite",
+  "mode": "sentence",
+  "original_size": 155,
+  "compressed_size": 126,
+  "compression_ratio": 0.81
+}
+```
+
+### English
+
+```bash
+curl -X POST http://localhost:3000/compress \
+  -H "Content-Type: application/json" \
+  -d '{"text": "The reason your React component is re-rendering is likely because you are creating a new object reference on each render cycle.", "preset": "full"}'
+
+# Response
+{
+  "compressed": "reason React is re-rendering is likely creating a reference on cycle.",
+  "language": "en",
+  "model": "caveman-mlm-en",
+  "preset": "full",
+  "mode": "sentence",
+  "original_size": 127,
+  "compressed_size": 69,
+  "compression_ratio": 0.54
+}
+```
+
+## Custom Models
+
+Add custom MLM models via `CUSTOM_MLM_MODELS` environment variable:
+
+```bash
+docker run -p 3000:3000 \
+  -e LANGUAGES=en,fr,sv \
+  -e CUSTOM_MLM_MODELS='{"sv": {"model": "KB/bert-base-swedish-cased", "spacy": "sv_core_news_sm"}}' \
+  caveman-compression
+```
+
+## MCP Server
+
+The MCP server provides the same functionality via the Model Context Protocol:
 
 ```json
 {
-  "mcp": {
-    "caveman": {
-      "type": "local",
-      "command": [
-<<<<<<< HEAD
-        "<path-to-repo>/venv/bin/python",
-        "<path-to-repo>/mcp_server.py"
-=======
-        "/var/home/bacon/Projects/caveman-compression/venv/bin/python",
-        "/var/home/bacon/Projects/caveman-compression/mcp_server.py"
->>>>>>> main
-      ],
-      "enabled": true
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "caveman_compress",
+    "arguments": {
+      "text": "Your text here",
+      "preset": "lite",
+      "mode": "sentence"
     }
   }
 }
 ```
 
-<<<<<<< HEAD
-Replace `<path-to-repo>` with the absolute path to your cloned repository.
+## Language Detection
 
-## Adding More Languages
+Language detection uses fastText (primary) with spaCy fallback:
 
-To add support for another language:
+- **fastText**: Fast, accurate, 170+ languages
+- **spaCy**: Fallback for unsupported languages
+- **Heuristic**: Last resort for unknown text
 
-1. Add the model config to `SUPPORTED_LANGUAGES` in `caveman_compress_mlm.py`:
-   ```python
-   SUPPORTED_LANGUAGES = {
-       "en": {"model": "roberta-base", "spacy": "en_core_web_sm"},
-       "fr": {"model": "camembert-base", "spacy": "fr_core_news_sm"},
-       "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
-   }
-   ```
+## Performance
 
-2. Add the model imports in `caveman_compress_mlm.py`:
-   ```python
-   from transformers import BertForMaskedLM, BertTokenizer
-   ```
+| Method | 100 words | 1000 words |
+|--------|-----------|------------|
+| NLP | ~100ms | ~1s |
+| MLM (sentence mode) | ~10s | ~100s |
+| MLM (text mode) | ~10s | ~100s |
 
-3. Update the `get_mlm_model` function to handle the new model type.
+MLM is ~100x slower than NLP due to neural network inference per word.
 
-=======
-## Adding More Languages
+## Supported Languages
 
-To add support for another language:
+### MLM Models (default)
 
-1. Add the model config to `SUPPORTED_LANGUAGES` in `caveman_compress_mlm.py`:
-   ```python
-   SUPPORTED_LANGUAGES = {
-       "en": {"model": "roberta-base", "spacy": "en_core_web_sm"},
-       "fr": {"model": "camembert-base", "spacy": "fr_core_news_sm"},
-       "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
-   }
-   ```
+| Language | Model | spaCy |
+|----------|-------|-------|
+| English | roberta-base | en_core_web_sm |
+| French | camembert-base | fr_core_news_sm |
+| German | bert-base-german-cased | de_core_news_sm |
+| Italian | dbmdz/bert-base-italian-cased | it_core_news_sm |
+| Portuguese | neuralmind/bert-base-portuguese-cased | pt_core_news_sm |
+| Turkish | dbmdz/bert-base-turkish-cased | tr_core_news_sm |
+| Chinese | bert-base-chinese | zh_core_web_sm |
 
-2. Add the model imports in `caveman_compress_mlm.py`:
-   ```python
-   from transformers import BertForMaskedLM, BertTokenizer
-   ```
+### NLP Models (fallback)
 
-3. Update the `get_mlm_model` function to handle the new model type.
+spaCy models for 15+ languages with multilingual fallback.
 
->>>>>>> main
-4. Download the spaCy model:
-   ```bash
-   python -m spacy download de_core_news_sm
-   ```
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LANGUAGES` | `en,fr` | Comma-separated languages to download |
+| `CUSTOM_MLM_MODELS` | `{}` | JSON object with custom model definitions |
+| `PORT` | `3000` | HTTP server port |
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/compress` | POST | Compress text |
 
 ## License
 
-MIT (same as original)
+Same as upstream [wilpel/caveman-compression](https://github.com/wilpel/caveman-compression).
