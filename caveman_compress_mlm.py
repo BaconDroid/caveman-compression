@@ -200,14 +200,16 @@ def get_mlm_probability(lang_code, sentence, word_idx):
     except Exception:
         return 0.0
 
-def compress_text(text, language=None, prob_threshold=1e-5, no_adjacent_removal=False, protect_ner=True):
+def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, no_adjacent_removal=False, protect_ner=True):
     """
     Apply MLM-based compression by removing words whose predictability exceeds threshold.
     
     Args:
         text: Input text to compress
         language: Language code (auto-detect if None)
-        prob_threshold: Probability threshold for removal (lower = more aggressive)
+        prob_threshold: Absolute probability threshold for removal (legacy)
+        drop_ratio: Fraction of words to drop (0.0-1.0). If set, uses adaptive threshold.
+                    E.g., 0.3 = drop 30% most predictable words
         no_adjacent_removal: If True, don't remove adjacent words
         protect_ner: If True, don't remove named entities
     """
@@ -247,34 +249,44 @@ def compress_text(text, language=None, prob_threshold=1e-5, no_adjacent_removal=
                     # Convert document index to sentence-local index
                     ner_spans.add(token.i - sent_start)
         
-        # Calculate probabilities and mark words for removal
-        to_remove = set()
-        prev_removed = False
-        
+        # Calculate probabilities for all words
+        word_probs = []
         for i, word in enumerate(words):
-            # Skip short words and punctuation
             if len(word) <= 2 or not word.isalpha():
-                prev_removed = False
-                continue
-            
-            # Skip NER tokens
-            if protect_ner and i in ner_spans:
-                prev_removed = False
-                continue
-            
-            # Get MLM probability
-            prob = get_mlm_probability(language, sent_text, i)
-            
-            # Mark for removal if probability exceeds threshold
-            if prob >= prob_threshold:
-                if no_adjacent_removal and prev_removed:
-                    # Skip this word but don't set prev_removed to True
-                    # so next word can still be removed
-                    continue
-                to_remove.add(i)
-                prev_removed = True
+                word_probs.append((i, 0.0))  # Never remove short words/punctuation
+            elif protect_ner and i in ner_spans:
+                word_probs.append((i, 0.0))  # Never remove NER
             else:
-                prev_removed = False
+                prob = get_mlm_probability(language, sent_text, i)
+                word_probs.append((i, prob))
+        
+        # Determine threshold
+        if drop_ratio is not None:
+            # Adaptive mode: sort by probability, drop top N%
+            sortable_probs = [(i, p) for i, p in word_probs if p > 0]
+            sortable_probs.sort(key=lambda x: x[1], reverse=True)
+            num_to_drop = int(len(sortable_probs) * drop_ratio)
+            to_remove = set(i for i, _ in sortable_probs[:num_to_drop])
+        else:
+            # Fixed threshold mode (legacy)
+            to_remove = set()
+            for i, prob in word_probs:
+                if prob >= prob_threshold:
+                    to_remove.add(i)
+        
+        # Apply no_adjacent_removal constraint
+        if no_adjacent_removal:
+            filtered_remove = set()
+            prev_removed = False
+            for i in range(len(words)):
+                if i in to_remove:
+                    if not prev_removed:
+                        filtered_remove.add(i)
+                        prev_removed = True
+                    # else: skip adjacent removal
+                else:
+                    prev_removed = False
+            to_remove = filtered_remove
         
         # Reconstruct sentence without removed words
         compressed_words = [w for i, w in enumerate(words) if i not in to_remove]
