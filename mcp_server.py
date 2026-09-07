@@ -17,15 +17,47 @@ from caveman_compress_nlp import compress_text as compress_text_nlp
 # MCP Protocol Constants
 MCP_VERSION = "2024-11-05"
 
-# Compression presets: name -> drop_ratio
-COMPRESSION_PRESETS = {
-    "lite": 0.3,        # Drop 30% most predictable words
-    "full": 0.5,        # Drop 50% most predictable words
-    "ultra": 0.7,       # Drop 70% most predictable words
-}
-
 # Languages with MLM models available (derived from SUPPORTED_LANGUAGES)
 MLM_LANGUAGES = set(SUPPORTED_LANGUAGES.keys())
+
+def calculate_nlp_drop_ratio(text, language):
+    """Calculate the drop ratio of NLP compression for calibration"""
+    try:
+        nlp_result = compress_text_nlp(text, lang=language)
+        original_size = len(text)
+        compressed_size = len(nlp_result)
+        if original_size == 0:
+            return 0.3  # default fallback
+        # NLP compression ratio (how much was kept)
+        kept_ratio = compressed_size / original_size
+        # Drop ratio (how much was removed)
+        drop_ratio = 1.0 - kept_ratio
+        # Round to nearest 0.1
+        return round(drop_ratio * 10) / 10
+    except Exception:
+        return 0.3  # default fallback
+
+def get_presets_from_nlp(text, language):
+    """Calculate MLM presets based on NLP compression ratio"""
+    nlp_drop = calculate_nlp_drop_ratio(text, language)
+    
+    # lite = NLP ratio (rounded to 0.1)
+    lite = nlp_drop
+    # full = lite * 1.5 (capped at 0.9)
+    full = min(0.9, lite * 1.5)
+    # ultra = lite * 2 (capped at 0.9)
+    ultra = min(0.9, lite * 2)
+    
+    # Round to nearest 0.1
+    full = round(full * 10) / 10
+    ultra = round(ultra * 10) / 10
+    
+    return {
+        "lite": lite,
+        "full": full,
+        "ultra": ultra,
+        "nlp_drop": nlp_drop
+    }
 
 def handle_request(request):
     """Handle MCP request"""
@@ -68,7 +100,7 @@ def handle_request(request):
                             },
                             "preset": {
                                 "type": "string",
-                                "description": "Compression preset: lite, full, ultra",
+                                "description": "Compression preset: lite, full, ultra (auto-calibrated from NLP)",
                                 "default": "full",
                                 "enum": ["lite", "full", "ultra"]
                             },
@@ -111,14 +143,16 @@ def handle_request(request):
             if not text:
                 return {"error": {"code": -32602, "message": "text is required"}}
             
-            # Get drop_ratio from preset or use custom value
-            if drop_ratio is not None:
-                drop_ratio = max(0.0, min(1.0, float(drop_ratio)))
-            else:
-                drop_ratio = COMPRESSION_PRESETS.get(preset, COMPRESSION_PRESETS["full"])
-            
             try:
                 lang = language or detect_language(text)
+                
+                # Calculate presets based on NLP compression if not overridden
+                if drop_ratio is None:
+                    presets = get_presets_from_nlp(text, lang)
+                    drop_ratio = presets.get(preset, presets["full"])
+                else:
+                    drop_ratio = max(0.0, min(1.0, float(drop_ratio)))
+                    presets = {"lite": drop_ratio, "full": drop_ratio, "ultra": drop_ratio}
                 
                 if method == "nlp":
                     compressed = compress_text_nlp(text, lang=lang)
@@ -151,6 +185,7 @@ def handle_request(request):
                         "model": model,
                         "preset": preset,
                         "drop_ratio": drop_ratio,
+                        "presets": presets,
                         "original_size": len(text),
                         "compressed_size": len(compressed),
                         "compression_ratio": len(compressed) / len(text) if text else 0
