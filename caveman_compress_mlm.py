@@ -200,7 +200,7 @@ def get_mlm_probability(lang_code, sentence, word_idx):
     except Exception:
         return 0.0
 
-def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, no_adjacent_removal=False, protect_ner=True):
+def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, preset="full", calibrate_from_nlp=True, no_adjacent_removal=False, protect_ner=True):
     """
     Apply MLM-based compression by removing words whose predictability exceeds threshold.
     
@@ -209,7 +209,8 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, no_
         language: Language code (auto-detect if None)
         prob_threshold: Absolute probability threshold for removal (legacy)
         drop_ratio: Fraction of words to drop (0.0-1.0). If set, uses adaptive threshold.
-                    E.g., 0.3 = drop 30% most predictable words
+        preset: Preset name (lite/full/ultra) used with calibrate_from_nlp
+        calibrate_from_nlp: If True, calibrate drop_ratio from NLP compression per sentence
         no_adjacent_removal: If True, don't remove adjacent words
         protect_ner: If True, don't remove named entities
     """
@@ -240,13 +241,39 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, no_
             result_parts.append(sent_text)
             continue
         
+        # Calculate drop_ratio for this sentence
+        sent_drop_ratio = drop_ratio
+        if sent_drop_ratio is None and calibrate_from_nlp:
+            # Calibrate from NLP compression of this sentence
+            try:
+                from caveman_compress_nlp import compress_text as compress_text_nlp
+                nlp_result = compress_text_nlp(sent_text, lang=language)
+                nlp_kept_ratio = len(nlp_result) / len(sent_text) if sent_text else 1.0
+                nlp_drop = 1.0 - nlp_kept_ratio
+                nlp_drop = round(nlp_drop * 10) / 10  # Round to 0.1
+                
+                # Apply preset formula
+                import math
+                if preset == "lite":
+                    sent_drop_ratio = nlp_drop
+                elif preset == "full":
+                    sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 1.5 * 10) / 10)
+                elif preset == "ultra":
+                    sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 2 * 10) / 10)
+                else:
+                    sent_drop_ratio = nlp_drop
+            except Exception:
+                sent_drop_ratio = 0.3  # fallback
+        
+        if sent_drop_ratio is None:
+            sent_drop_ratio = 0.3  # default fallback
+        
         # Get NER spans to protect (convert to sentence-local indices)
         ner_spans = set()
         if protect_ner:
             sent_start = sent.start
             for ent in sent.ents:
                 for token in ent:
-                    # Convert document index to sentence-local index
                     ner_spans.add(token.i - sent_start)
         
         # Calculate probabilities for all words
@@ -264,10 +291,10 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, no_
                 word_probs.append((i, prob))
         
         # Determine threshold
-        if drop_ratio is not None:
+        if sent_drop_ratio is not None:
             # Adaptive mode: calculate how many words to drop from TOTAL words
             total_words = len(words)
-            num_to_drop = int(total_words * drop_ratio)
+            num_to_drop = int(total_words * sent_drop_ratio)
             
             # Sort by probability (highest first = most predictable)
             sortable_probs = [(i, p) for i, p in word_probs if p > 0]
@@ -295,7 +322,6 @@ def compress_text(text, language=None, prob_threshold=None, drop_ratio=None, no_
                     if not prev_removed:
                         filtered_remove.add(i)
                         prev_removed = True
-                    # else: skip adjacent removal
                 else:
                     prev_removed = False
             to_remove = filtered_remove
