@@ -17,6 +17,15 @@ from caveman_compress_nlp import compress_text as compress_text_nlp
 
 app = Flask(__name__)
 
+# Compression presets: name -> prob_threshold
+# Higher threshold = less aggressive (keeps more words)
+# Lower threshold = more aggressive (removes more words)
+COMPRESSION_PRESETS = {
+    "light": 1e-2,      # Light compression, keeps most words
+    "medium": 1e-3,     # Medium compression
+    "aggressive": 1e-5, # Aggressive compression (old default)
+}
+
 # Cache models on startup
 print("Loading models...", file=sys.stderr)
 try:
@@ -40,6 +49,16 @@ def compress():
     text = data['text']
     language = data.get('language')
     method = data.get('method', 'auto')  # auto, mlm, nlp
+    preset = data.get('preset', 'light')  # light, medium, aggressive
+    threshold = data.get('threshold')  # Override preset if specified
+    
+    # Get threshold from preset or use custom value
+    if threshold is not None:
+        # Custom threshold (must be between 1e-7 and 1e-1)
+        threshold = max(1e-7, min(1e-1, float(threshold)))
+    else:
+        # Use preset
+        threshold = COMPRESSION_PRESETS.get(preset, COMPRESSION_PRESETS["light"])
     
     try:
         # Auto-detect language if not specified
@@ -52,12 +71,12 @@ def compress():
             model = f"caveman-nlp-{language}"
         elif method == 'mlm':
             # Force MLM mode
-            compressed = compress_text(text, language=language)
+            compressed = compress_text(text, language=language, prob_threshold=threshold)
             model = f"caveman-mlm-{language}"
         else:
             # Auto mode: MLM for en/fr/de/zh/pt/tr/it, NLP for others
             if language in ["en", "fr", "de", "zh", "pt", "tr", "it"]:
-                compressed = compress_text(text, language=language)
+                compressed = compress_text(text, language=language, prob_threshold=threshold)
                 model = f"caveman-mlm-{language}"
             else:
                 compressed = compress_text_nlp(text, lang=language)
@@ -67,6 +86,8 @@ def compress():
             'compressed': compressed,
             'language': language,
             'model': model,
+            'preset': preset,
+            'threshold': threshold,
             'original_size': len(text),
             'compressed_size': len(compressed),
             'compression_ratio': len(compressed) / len(text) if text else 0

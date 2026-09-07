@@ -32,7 +32,8 @@ _models = {}
 _device = None
 _nlp_models = {}
 
-SUPPORTED_LANGUAGES = {
+# Default supported languages
+DEFAULT_LANGUAGES = {
     "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
     "en": {"model": "roberta-base", "spacy": "en_core_web_sm"},
     "fr": {"model": "camembert-base", "spacy": "fr_core_news_sm"},
@@ -41,6 +42,23 @@ SUPPORTED_LANGUAGES = {
     "tr": {"model": "dbmdz/bert-base-turkish-cased", "spacy": "tr_core_news_sm"},
     "zh": {"model": "bert-base-chinese", "spacy": "zh_core_web_sm"},
 }
+
+# Load custom models from environment variable
+# Format: CUSTOM_MLM_MODELS='{"sv": {"model": "KB/bert-base-swedish-cased", "spacy": "sv_core_news_sm"}}'
+def _load_custom_models():
+    """Load custom MLM models from CUSTOM_MLM_MODELS environment variable"""
+    custom_json = os.environ.get("CUSTOM_MLM_MODELS")
+    if custom_json:
+        try:
+            custom = json.loads(custom_json)
+            print(f"Loading custom MLM models: {list(custom.keys())}", file=sys.stderr)
+            return custom
+        except json.JSONDecodeError as e:
+            print(f"Warning: Invalid CUSTOM_MLM_MODELS JSON: {e}", file=sys.stderr)
+    return {}
+
+# Merge default and custom languages
+SUPPORTED_LANGUAGES = {**DEFAULT_LANGUAGES, **_load_custom_models()}
 
 def detect_language(text):
     """Detect language using spaCy or simple heuristics"""

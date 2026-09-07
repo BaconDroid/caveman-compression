@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 Caveman Compression MCP Server
-Provides text compression tools via MCP protocol.
-Supports MLM (RoBERTa for English, CamemBERT for French) and NLP compression.
+Provides MLM-based text compression via MCP protocol.
 """
 
 import json
@@ -17,6 +16,13 @@ from caveman_compress_nlp import compress_text as compress_text_nlp
 
 # MCP Protocol Constants
 MCP_VERSION = "2024-11-05"
+
+# Compression presets: name -> prob_threshold
+COMPRESSION_PRESETS = {
+    "light": 1e-2,      # Light compression, keeps most words
+    "medium": 1e-3,     # Medium compression
+    "aggressive": 1e-5, # Aggressive compression
+}
 
 def handle_request(request):
     """Handle MCP request"""
@@ -56,6 +62,16 @@ def handle_request(request):
                                 "type": "string",
                                 "description": "Compression method: auto, mlm, nlp",
                                 "default": "auto"
+                            },
+                            "preset": {
+                                "type": "string",
+                                "description": "Compression preset: light, medium, aggressive",
+                                "default": "light",
+                                "enum": ["light", "medium", "aggressive"]
+                            },
+                            "threshold": {
+                                "type": "number",
+                                "description": "Custom probability threshold (overrides preset). Range: 1e-7 to 1e-1. Higher = less aggressive."
                             }
                         },
                         "required": ["text"]
@@ -79,117 +95,91 @@ def handle_request(request):
         }
     
     elif method == "tools/call":
-        tool_name = params.get("name")
+        name = params.get("name")
         arguments = params.get("arguments", {})
         
-        if tool_name == "caveman_compress":
-            text = arguments.get("text", "")
+        if name == "caveman_compress":
+            text = arguments.get("text")
             language = arguments.get("language")
             method = arguments.get("method", "auto")
+            preset = arguments.get("preset", "light")
+            threshold = arguments.get("threshold")
+            
+            if not text:
+                return {"error": {"code": -32602, "message": "text is required"}}
+            
+            # Get threshold from preset or use custom value
+            if threshold is not None:
+                threshold = max(1e-7, min(1e-1, float(threshold)))
+            else:
+                threshold = COMPRESSION_PRESETS.get(preset, COMPRESSION_PRESETS["light"])
             
             try:
+                lang = language or detect_language(text)
+                
                 if method == "nlp":
-                    # Force NLP mode
-                    lang = language or detect_language(text)
-<<<<<<< HEAD
                     compressed = compress_text_nlp(text, lang=lang)
-=======
-                    compressed = compress_text_nlp(text, language=lang)
->>>>>>> main
                     model = f"caveman-nlp-{lang}"
                 elif method == "mlm":
-                    # Force MLM mode
-                    compressed = compress_text(text, language=language)
-                    model = f"caveman-mlm"
+                    compressed = compress_text(text, language=lang, prob_threshold=threshold)
+                    model = f"caveman-mlm-{lang}"
                 else:
-<<<<<<< HEAD
                     # Auto mode: MLM for en/fr/de/zh/pt/tr/it, NLP for others
-                    lang = language or detect_language(text)
                     if lang in ["en", "fr", "de", "zh", "pt", "tr", "it"]:
-                        compressed = compress_text(text, language=lang)
+                        compressed = compress_text(text, language=lang, prob_threshold=threshold)
                         model = f"caveman-mlm-{lang}"
                     else:
                         compressed = compress_text_nlp(text, lang=lang)
-=======
-                    # Auto mode: MLM for en/fr, NLP for others
-                    lang = language or detect_language(text)
-                    if lang in ["en", "fr"]:
-                        compressed = compress_text(text, language=lang)
-                        model = f"caveman-mlm-{lang}"
-                    else:
-                        compressed = compress_text_nlp(text, language=lang)
->>>>>>> main
                         model = f"caveman-nlp-{lang}"
                 
                 return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": compressed
-                        }
-                    ]
+                    "content": [{"type": "text", "text": compressed}],
+                    "metadata": {
+                        "language": lang,
+                        "model": model,
+                        "preset": preset,
+                        "threshold": threshold,
+                        "original_size": len(text),
+                        "compressed_size": len(compressed),
+                        "compression_ratio": len(compressed) / len(text) if text else 0
+                    }
                 }
             except Exception as e:
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"Error: {str(e)}"
-                        }
-                    ],
-                    "isError": True
-                }
+                return {"error": {"code": -32000, "message": str(e)}}
         
-        elif tool_name == "caveman_stats":
-            text = arguments.get("text", "")
-            original_size = len(text)
-            language = detect_language(text)
+        elif name == "caveman_stats":
+            text = arguments.get("text")
+            if not text:
+                return {"error": {"code": -32602, "message": "text is required"}}
             
             try:
-                # Get compression for detected language
-                if language in ["en", "fr"]:
-                    compressed = compress_text(text, language=language)
-                    model = f"caveman-mlm-{language}"
-                else:
-                    compressed = compress_text_nlp(text, language=language)
-                    model = f"caveman-nlp-{language}"
+                lang = detect_language(text)
+                orig_tokens = len(text.strip()) // 4
                 
                 return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": json.dumps({
-                                "original_size": original_size,
-                                "compressed_size": len(compressed),
-                                "language": language,
-                                "model": model,
-                                "ratio": len(compressed) / original_size if original_size > 0 else 0,
-                                "reduction": f"{(1 - len(compressed) / original_size) * 100:.1f}%" if original_size > 0 else "0%"
-                            }, indent=2)
-                        }
-                    ]
+                    "content": [{"type": "text", "text": f"Language: {lang}, Tokens: ~{orig_tokens}"}],
+                    "metadata": {
+                        "language": lang,
+                        "original_size": len(text),
+                        "estimated_tokens": orig_tokens
+                    }
                 }
             except Exception as e:
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"Error: {str(e)}"
-                        }
-                    ],
-                    "isError": True
-                }
+                return {"error": {"code": -32000, "message": str(e)}}
+        
+        else:
+            return {"error": {"code": -32601, "message": f"Unknown tool: {name}"}}
     
-<<<<<<< HEAD
-    return {"error": {"code": -32601, "message": "Method not found"}}
-=======
-    return {"error": "Method not found"}
->>>>>>> main
+    elif method == "notifications/initialized":
+        # Client initialized, no response needed
+        return None
+    
+    else:
+        return {"error": {"code": -32601, "message": f"Unknown method: {method}"}}
 
 def main():
     """Main MCP server loop"""
-    # Load models on startup
-    print("Loading models...", file=sys.stderr)
+    # Pre-load models
     try:
         from caveman_compress_mlm import get_mlm_model
         # Pre-load English and French models
@@ -209,24 +199,22 @@ def main():
             
             # Add JSON-RPC fields
             response["jsonrpc"] = "2.0"
-            response["id"] = request.get("id")
+            if "id" in request:
+                response["id"] = request["id"]
             
-            print(json.dumps(response))
-            sys.stdout.flush()
+            print(json.dumps(response), flush=True)
         except json.JSONDecodeError:
             print(json.dumps({
                 "jsonrpc": "2.0",
                 "error": {"code": -32700, "message": "Parse error"},
                 "id": None
-            }))
-            sys.stdout.flush()
+            }), flush=True)
         except Exception as e:
             print(json.dumps({
                 "jsonrpc": "2.0",
                 "error": {"code": -32603, "message": str(e)},
-                "id": request.get("id") if 'request' in locals() else None
-            }))
-            sys.stdout.flush()
+                "id": request.get("id") if "request" in dir() else None
+            }), flush=True)
 
 if __name__ == "__main__":
     main()
