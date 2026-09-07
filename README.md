@@ -1,332 +1,213 @@
-<div align="center">
+# opencode-caveman-compress
 
-![Caveman Compression](images/banner.png)
+MLM-based text compression for LLM context optimization. Fork of [wilpel/caveman-compression](https://github.com/wilpel/caveman-compression) with additional features.
 
-**Lossless semantic compression for LLM contexts**
+**Why use many token when few token do trick?**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+## Features
 
-[Quick Start](#quick-start) • [Examples](#examples) • [Benchmarks](#benchmarks) • [Spec](SPEC.md)
-
-</div>
-
----
-
-## What is this?
-
-Strip grammar. Keep facts. Save tokens.
-
-```diff
-- "In order to optimize the database query performance, we should consider implementing an index on the frequently accessed columns..." (70 tokens)
-+ "Need fast queries. Check which columns used most. Add index to those columns..." (50 tokens)
-
-= 29% reduction
-```
-
----
-
-## How It Works
-
-![How Caveman Compression Works](images/info.png)
-
-LLMs excel at filling linguistic gaps. They predict missing grammar, connectives, and structure.
-
-**Key insight:** We remove only what LLMs can reliably reconstruct.
-
-**What we remove (predictable):**
-- Grammar: "a", "the", "is", "are"
-- Connectives: "therefore", "however", "because"
-- Passive constructions: "is calculated by"
-- Filler words: "very", "quite", "essentially"
-
-**What we keep (unpredictable):**
-- Facts: numbers, names, dates
-- Technical terms: "O(log n)", "binary search"
-- Constraints: "medium-large", "frequently accessed"
-- Specifics: "Stockholm", "99.9% uptime"
-
-```
-Compressed: "Company medium-large. Location Stockholm."
-Decompressed: "at a medium-large company based in Stockholm"
-           ↑ grammar added, facts unchanged ↑
-```
-
----
+- **MLM compression** using masked language models (RoBERTa for English, CamemBERT for French)
+- **NLP fallback** for languages without MLM models (spaCy-based)
+- **Auto language detection** via fastText (170+ languages)
+- **Dynamic presets** calibrated from NLP compression ratio
+- **Sentence or text mode** for different compression contexts
+- **Custom MLM models** via environment variable
+- **HTTP API** and **MCP server** for integration
+- **Docker support** for easy deployment
 
 ## Quick Start
 
-### Installation
+### Docker
 
-**LLM-based (best compression, requires OpenAI API):**
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Build and run
+docker build -t caveman-compression .
+docker run -p 3000:3000 -e LANGUAGES=en,fr caveman-compression
 
-# Set up API key
-cp .env.example .env
-# Edit .env and add your OpenAI API key
+# Or with docker-compose
+docker-compose up -d
 ```
 
-**NLP-based (free, offline, multilingual):**
+### API Usage
+
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements-nlp.txt
-python -m spacy download en_core_web_sm  # or other language models
+# Compress text (default: preset=lite, mode=sentence)
+curl -X POST http://localhost:3000/compress \
+  -H "Content-Type: application/json" \
+  -d '{"text": "The reason your React component is re-rendering is likely because you are creating a new object reference on each render cycle."}'
+
+# Response
+{
+  "compressed": "reason your React is re-rendering is likely creating a object reference on each render cycle.",
+  "language": "en",
+  "model": "caveman-mlm-en",
+  "preset": "lite",
+  "mode": "sentence",
+  "original_size": 127,
+  "compressed_size": 93,
+  "compression_ratio": 0.73
+}
 ```
 
-**MLM-based (free, offline, predictability-aware):**
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements-mlm.txt
-python -m spacy download en_core_web_sm
-```
+## Presets
 
-### Usage
+Presets are dynamically calibrated from NLP compression ratio. The NLP compressor removes stop words, determiners, and auxiliaries. MLM presets are calculated relative to NLP:
 
-**NLP-based compression (most stable, 15-30% reduction, free, offline):**
-```bash
-python caveman_compress_nlp.py compress "Your verbose text here"
-python caveman_compress_nlp.py compress -f input.txt -o output.txt
-python caveman_compress_nlp.py compress -f input.txt -l es  # specify language
-```
+| Preset | Formula | Effect |
+|--------|---------|--------|
+| `lite` | = NLP | Similar to NLP compression (~30% removed) |
+| `full` | = NLP × 1.5 | More aggressive (~45% removed) |
+| `ultra` | = NLP × 2 | Maximum compression (~60% removed) |
 
-**MLM-based compression (20-30% reduction, free, offline, predictability-aware):**
-```bash
-python caveman_compress_mlm.py compress "Your verbose text here"
-python caveman_compress_mlm.py compress -f input.txt -o output.txt
-python caveman_compress_mlm.py compress -f input.txt -k 30  # adjust compression level
-```
+**Default:** `lite` (fast, simple, effective)
 
-**LLM-based compression (40-58% reduction, requires API key):**
-```bash
-python caveman_compress.py compress "Your verbose text here"
-python caveman_compress.py compress -f input.txt -o output.txt
-```
+## Modes
 
-**Decompress:**
-```bash
-python caveman_compress.py decompress "Caveman text here"
-```
+| Mode | NLP Context | MLM Context | Performance | Use Case |
+|------|-------------|-------------|-------------|----------|
+| `sentence` | Per sentence | Word in sentence | Fast | Default, preserves structure |
+| `text` | Full text | Word in text | Slower | Long texts, global context |
 
----
+**Default:** `sentence`
+
+## API Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `text` | string | required | Text to compress |
+| `language` | string | auto | Language code (en, fr, de, etc.) |
+| `preset` | string | `lite` | Compression preset: `lite`, `full`, `ultra` |
+| `mode` | string | `sentence` | Compression mode: `sentence`, `text` |
+| `method` | string | `mlm` | Compression method: `mlm`, `nlp` |
+
+### Method
+
+- `mlm` (default): Uses MLM when available (en, fr, de, zh, pt, tr, it), NLP fallback for others
+- `nlp`: Force NLP mode (spaCy-based, no MLM)
 
 ## Examples
 
-### Resume
-
-<table>
-<tr>
-<td width="50%"><b>Normal (201 tokens)</b></td>
-<td width="50%"><b>Caveman (156 tokens)</b></td>
-</tr>
-<tr>
-<td>
-
-I am John Smith, a 32-year-old Senior Software Engineer at a large enterprise software company based in San Francisco, California. I have over 8 years of experience in backend development, distributed systems, and database optimization. Throughout my career, I have successfully designed and implemented scalable microservices...
-
-</td>
-<td>
-
-John Smith. 32 years old. Senior Software Engineer. Large enterprise software company. San Francisco, California. 8 years experience. Backend development, distributed systems, database optimization. Designed scalable microservices. 50 million requests daily...
-
-</td>
-</tr>
-<tr>
-<td colspan="2" align="center"><b>22% reduction</b></td>
-</tr>
-</table>
-
-### System Prompt
-
-<table>
-<tr>
-<td width="50%"><b>Normal (171 tokens)</b></td>
-<td width="50%"><b>Caveman (72 tokens)</b></td>
-</tr>
-<tr>
-<td>
-
-You are a helpful AI assistant designed to provide accurate and concise responses to user queries. When answering questions, you should always prioritize clarity and correctness over speed. If you are uncertain about any information, you must explicitly state your uncertainty...
-
-</td>
-<td>
-
-Helpful AI assistant. Provide accurate, concise responses. Prioritize clarity, correctness. If uncertain, state uncertainty. Break complex problems into smaller steps. Explain reasoning clearly...
-
-</td>
-</tr>
-<tr>
-<td colspan="2" align="center"><b>58% reduction</b></td>
-</tr>
-</table>
-
-### API Documentation
-
-<table>
-<tr>
-<td width="50%"><b>Normal (137 tokens)</b></td>
-<td width="50%"><b>Caveman (79 tokens)</b></td>
-</tr>
-<tr>
-<td>
-
-To authenticate with our API, you need to include your API key in the Authorization header of every request. The API key should be prefixed with the word "Bearer" followed by a space. If authentication fails, the server will return a 401 Unauthorized status code...
-
-</td>
-<td>
-
-Authenticate API. Include API key in Authorization header every request. Prefix API key with "Bearer" space. Authentication fail, server return 401 Unauthorized status code, error message explain fail...
-
-</td>
-</tr>
-<tr>
-<td colspan="2" align="center"><b>42% reduction</b></td>
-</tr>
-</table>
-
----
-
-## Benchmarks
-
-### Factual Preservation
-
-Automated benchmark verifying that specific facts are preserved and retrievable after compression:
+### French
 
 ```bash
-# LLM-based compression
-python benchmark/factual_preservation/run_factual_benchmark.py
+curl -X POST http://localhost:3000/compress \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Bonjour, je travaille sur un projet complexe qui nécessite une attention particulière aux détails et une compréhension approfondie des exigences du client.", "preset": "lite"}'
 
-# NLP-based compression
-python benchmark/factual_preservation/run_factual_benchmark_nlp.py
+# Response
+{
+  "compressed": "Bonjour, je travaille sur un projet complexe nécessite particulière détails et compréhension approfondie exigences du client.",
+  "language": "fr",
+  "model": "caveman-mlm-fr",
+  "preset": "lite",
+  "mode": "sentence",
+  "original_size": 155,
+  "compressed_size": 126,
+  "compression_ratio": 0.81
+}
 ```
 
-**Results:** 13/13 facts preserved (100%) with 12-25% compression ratio.
+### English
 
-See [benchmark/factual_preservation/](benchmark/factual_preservation/) for details.
+```bash
+curl -X POST http://localhost:3000/compress \
+  -H "Content-Type: application/json" \
+  -d '{"text": "The reason your React component is re-rendering is likely because you are creating a new object reference on each render cycle.", "preset": "full"}'
 
-### Example Reductions
+# Response
+{
+  "compressed": "reason React is re-rendering is likely creating a reference on cycle.",
+  "language": "en",
+  "model": "caveman-mlm-en",
+  "preset": "full",
+  "mode": "sentence",
+  "original_size": 127,
+  "compressed_size": 69,
+  "compression_ratio": 0.54
+}
+```
 
-| Test Case | Original | Compressed | Reduction |
-|-----------|----------|------------|-----------|
-| System prompt | 171 tokens | 72 tokens | **58%** |
-| API documentation | 137 tokens | 79 tokens | **42%** |
-| Resume | 201 tokens | 156 tokens | **22%** |
-| **Average** | **170** | **102** | **40%** |
+## Custom Models
 
-All examples validated with GPT-4o. See [examples/](examples/) for full text.
+Add custom MLM models via `CUSTOM_MLM_MODELS` environment variable:
 
----
+```bash
+docker run -p 3000:3000 \
+  -e LANGUAGES=en,fr,sv \
+  -e CUSTOM_MLM_MODELS='{"sv": {"model": "KB/bert-base-swedish-cased", "spacy": "sv_core_news_sm"}}' \
+  caveman-compression
+```
 
-## Core Principles
+## MCP Server
 
-1. **Strip connectives** - Remove: therefore, however, because, in order to
-2. **2-5 words per sentence** - One atomic thought per sentence
-3. **Action verbs** - Prefer: do, make, fix, check vs facilitate, optimize
-4. **Be concrete** - "test five, test six" not "test values 5-6"
-5. **Active voice** - "calculate value" not "value is calculated"
-6. **Keep meaningful info** - Numbers, sizes, names, constraints stay
+The MCP server provides the same functionality via the Model Context Protocol:
 
-See [SPEC.md](SPEC.md) for full rules.
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "caveman_compress",
+    "arguments": {
+      "text": "Your text here",
+      "preset": "lite",
+      "mode": "sentence"
+    }
+  }
+}
+```
 
----
+## Language Detection
 
-## Use Cases
+Language detection uses fastText (primary) with spaCy fallback:
 
-### RAG Knowledge Base (199→118 tokens, 41%)
+- **fastText**: Fast, accurate, 170+ languages
+- **spaCy**: Fallback for unsupported languages
+- **Heuristic**: Last resort for unknown text
 
-**Original:**
-> A network router is a device that forwards data packets between computer networks. Routers perform the traffic directing functions on the Internet. When a data packet arrives at a router, the router examines the destination IP address...
+## Performance
 
-**Compressed:**
-> Network router forwards data packets. Routers direct Internet traffic. Packet arrives router. Router examines destination IP address. Router determines best path. Router uses routing table...
+| Method | 100 words | 1000 words |
+|--------|-----------|------------|
+| NLP | ~100ms | ~1s |
+| MLM (sentence mode) | ~10s | ~100s |
+| MLM (text mode) | ~10s | ~100s |
 
-**Why it works:** Store compressed docs in vector DB. Agent receives compressed RAG results directly. No decompression needed—agent understands caveman format. Fits 2-3x more context.
+MLM is ~100x slower than NLP due to neural network inference per word.
 
-### Agent Internal Reasoning (196→102 tokens, 48%)
+## Supported Languages
 
-**Original:**
-> First, I need to understand what the user is asking for. They want to calculate the optimal route between two cities considering both distance and traffic conditions. Let me break this down into steps. Step one: I should identify the starting city...
+### MLM Models (default)
 
-**Compressed:**
-> Need understand user request. User wants optimal route between cities. Consider distance, traffic. Step one: Identify starting city, destination city. Step two: Retrieve current traffic data for routes...
+| Language | Model | spaCy |
+|----------|-------|-------|
+| English | roberta-base | en_core_web_sm |
+| French | camembert-base | fr_core_news_sm |
+| German | bert-base-german-cased | de_core_news_sm |
+| Italian | dbmdz/bert-base-italian-cased | it_core_news_sm |
+| Portuguese | neuralmind/bert-base-portuguese-cased | pt_core_news_sm |
+| Turkish | dbmdz/bert-base-turkish-cased | tr_core_news_sm |
+| Chinese | bert-base-chinese | zh_core_web_sm |
 
-**Why it works:** Agent thinks in caveman format during problem-solving. Chain-of-thought uses 50% fewer tokens. More reasoning steps fit in context window.
+### NLP Models (fallback)
 
----
+spaCy models for 15+ languages with multilingual fallback.
 
-## Compression Methods
+## Environment Variables
 
-### LLM-based (`caveman_compress.py`)
-- **Reduction:** 40-58%
-- **Cost:** Requires OpenAI API key
-- **Quality:** Best compression, context-aware
-- **Speed:** ~2s per request
-- **Use when:** Maximum token savings needed
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LANGUAGES` | `en,fr` | Comma-separated languages to download |
+| `CUSTOM_MLM_MODELS` | `{}` | JSON object with custom model definitions |
+| `PORT` | `3000` | HTTP server port |
 
-### MLM-based (`caveman_compress_mlm.py`)
-- **Reduction:** 20-30%
-- **Cost:** Free
-- **Quality:** Excellent compression, predictability-aware using RoBERTa
-- **Speed:** ~1-5s per document (local model)
-- **Method:** Removes top-k most predictable tokens based on masked language model probabilities
-- **Use when:** Need better compression than NLP without API costs, can tolerate model download (~500MB) and initial loading time
+## API Endpoints
 
-### NLP-based (`caveman_compress_nlp.py`)
-- **Reduction:** 15-30%
-- **Cost:** Free
-- **Quality:** Good compression, rule-based
-- **Speed:** <100ms
-- **Languages:** 15+ supported (en, es, de, fr, it, pt, nl, el, nb, lt, ja, zh, pl, ro, ru, and more)
-- **Use when:** Working offline, processing large volumes, no API budget, or need multilingual support
-
----
-
-## When to Use
-
-✅ **Good for:**
-- LLM reasoning/thinking blocks
-- Token-constrained contexts
-- Internal documentation
-- Step-by-step instructions
-
-❌ **Avoid for:**
-- User-facing content
-- Marketing copy
-- Legal documents
-- Emotional communication
-
----
-
-## Documentation
-
-- [SPEC.md](SPEC.md) - Full specification and rules
-- [examples/](examples/) - Before/after samples
-- [benchmark/](benchmark/) - Semantic losslessness tests
-- [prompts/compression.txt](prompts/compression.txt) - System prompt for compression
-- [prompts/decompression.txt](prompts/decompression.txt) - System prompt for decompression
-
----
-
-## Contributing
-
-Contributions welcome. Submit issues or PRs.
-
----
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/compress` | POST | Compress text |
 
 ## License
 
-MIT
-
----
-
-## Author
-
-**William Peltomäki**
-
----
-
-Inspired by [TOON](https://github.com/toon-format/toon) and the token-optimization movement.
+Same as upstream [wilpel/caveman-compression](https://github.com/wilpel/caveman-compression).
