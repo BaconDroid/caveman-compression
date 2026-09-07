@@ -3,7 +3,6 @@ version: '3.8'
 services:
   caveman-compression:
     build: .
-    container_name: caveman-compression
     ports:
       - "3000:3000"
     environment:
