@@ -23,5 +23,7 @@ services:
       # - CUSTOM_SPACY_MODELS=de:de_core_news_sm
     restart: unless-stopped
     volumes:
-      # Cache models between restarts
-      - ./models:/root/.cache
+      # Cache HuggingFace models between restarts
+      - ./hf-cache:/root/.cache/huggingface
+      # Cache spaCy models between restarts
+      - ./spacy-cache:/root/.cache/spacy

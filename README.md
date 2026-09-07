@@ -91,14 +91,16 @@ The MCP server is configured in `~/.config/opencode/opencode.json`:
     "caveman": {
       "type": "local",
       "command": [
-        "/var/home/bacon/Projects/caveman-compression/venv/bin/python",
-        "/var/home/bacon/Projects/caveman-compression/mcp_server.py"
+        "<path-to-repo>/venv/bin/python",
+        "<path-to-repo>/mcp_server.py"
       ],
       "enabled": true
     }
   }
 }
 ```
+
+Replace `<path-to-repo>` with the absolute path to your cloned repository.
 
 ## Adding More Languages
 

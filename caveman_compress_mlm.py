@@ -183,12 +183,14 @@ def compress_text(text, language=None, prob_threshold=1e-5, no_adjacent_removal=
             result_parts.append(sent_text)
             continue
         
-        # Get NER spans to protect
+        # Get NER spans to protect (convert to sentence-local indices)
         ner_spans = set()
         if protect_ner:
+            sent_start = sent.start
             for ent in sent.ents:
                 for token in ent:
-                    ner_spans.add(token.i)
+                    # Convert document index to sentence-local index
+                    ner_spans.add(token.i - sent_start)
         
         # Calculate probabilities and mark words for removal
         to_remove = set()
@@ -211,6 +213,8 @@ def compress_text(text, language=None, prob_threshold=1e-5, no_adjacent_removal=
             # Mark for removal if probability exceeds threshold
             if prob >= prob_threshold:
                 if no_adjacent_removal and prev_removed:
+                    # Skip this word but don't set prev_removed to True
+                    # so next word can still be removed
                     continue
                 to_remove.add(i)
                 prev_removed = True

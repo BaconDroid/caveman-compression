@@ -56,6 +56,8 @@ def download_models(languages, mlm_models, spacy_models):
     
     print(f"Downloading models for languages: {', '.join(lang_list)}")
     
+    errors = []
+    
     for lang in lang_list:
         if lang not in mlm_models:
             print(f"Warning: No MLM model configured for language '{lang}', skipping")
@@ -76,6 +78,7 @@ def download_models(languages, mlm_models, spacy_models):
             print(f"  ✓ MLM model '{mlm_model}' downloaded")
         except Exception as e:
             print(f"  ✗ Failed to download MLM model '{mlm_model}': {e}")
+            errors.append(f"MLM model '{mlm_model}' for '{lang}'")
         
         # Download spaCy model
         spacy_model = spacy_models.get(lang)
@@ -90,6 +93,13 @@ def download_models(languages, mlm_models, spacy_models):
                 print(f"  ✓ spaCy model '{spacy_model}' downloaded")
             except Exception as e:
                 print(f"  ✗ Failed to download spaCy model '{spacy_model}': {e}")
+                errors.append(f"spaCy model '{spacy_model}' for '{lang}'")
+    
+    if errors:
+        print(f"\nFailed to download {len(errors)} model(s):")
+        for err in errors:
+            print(f"  - {err}")
+        sys.exit(1)
     
     print("Model downloads complete!")
 
