@@ -36,6 +36,7 @@ _mlm.SUPPORTED_LANGUAGES = {"en": {}, "fr": {}, "de": {}}
 _mlm.detect_language = lambda text: _Behavior.detected
 _mlm.compress_text = _fake_mlm_compress
 _mlm.get_mlm_model = lambda lang: None
+_mlm.InputTooLongError = type("InputTooLongError", (ValueError,), {})
 
 _nlp = types.ModuleType("caveman_compress_nlp")
 _nlp.compress_text = lambda text, lang="en": _Behavior.nlp_result
@@ -114,7 +115,8 @@ class McpProtocolTest(unittest.TestCase):
         msg = json.loads(out)
         self.assertEqual(msg["id"], 7)
         self.assertEqual(msg["jsonrpc"], "2.0")
-        self.assertEqual(msg["protocolVersion"], "2024-11-05")
+        self.assertIn("result", msg)
+        self.assertEqual(msg["result"]["protocolVersion"], "2024-11-05")
 
     def test_tools_list(self):
         out = self.mcp_server.process_line(
@@ -122,7 +124,8 @@ class McpProtocolTest(unittest.TestCase):
         )
         msg = json.loads(out)
         self.assertEqual(msg["id"], 1)
-        self.assertIn("tools", msg)
+        self.assertIn("result", msg)
+        self.assertIn("tools", msg["result"])
 
     def test_unknown_method(self):
         out = self.mcp_server.process_line(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "bogus"}))
@@ -134,8 +137,10 @@ class McpProtocolTest(unittest.TestCase):
     def test_tools_call_success(self):
         msg = self._call({"text": "hello world"})
         self.assertNotIn("error", msg)
-        self.assertEqual(msg["metadata"]["model"], "caveman-mlm-en")
-        self.assertFalse(msg["metadata"]["fallback"])
+        self.assertIn("result", msg)
+        self.assertEqual(msg["result"]["content"][0]["type"], "text")
+        self.assertEqual(msg["result"]["metadata"]["model"], "caveman-mlm-en")
+        self.assertFalse(msg["result"]["metadata"]["fallback"])
 
     def test_tools_call_missing_text(self):
         self.assertEqual(self._call({})["error"]["code"], -32602)
@@ -187,15 +192,15 @@ class McpProtocolTest(unittest.TestCase):
         _Behavior.mlm_error = OSError("model unavailable")
         msg = self._call({"text": "hello world"})
         self.assertNotIn("error", msg)
-        self.assertEqual(msg["metadata"]["model"], "caveman-nlp-en")
-        self.assertTrue(msg["metadata"]["fallback"])
+        self.assertEqual(msg["result"]["metadata"]["model"], "caveman-nlp-en")
+        self.assertTrue(msg["result"]["metadata"]["fallback"])
 
     def test_mlm_method_nlp_fallback_for_language_without_mlm(self):
         _Behavior.detected = "es"  # Spanish has no MLM model
         msg = self._call({"text": "hola mundo"})
         self.assertNotIn("error", msg)
-        self.assertEqual(msg["metadata"]["model"], "caveman-nlp-es")
-        self.assertTrue(msg["metadata"]["fallback"])
+        self.assertEqual(msg["result"]["metadata"]["model"], "caveman-nlp-es")
+        self.assertTrue(msg["result"]["metadata"]["fallback"])
 
     def test_mlm_unexpected_error_is_internal(self):
         _Behavior.mlm_error = RuntimeError("boom")
@@ -207,7 +212,8 @@ class McpProtocolTest(unittest.TestCase):
     def test_caveman_stats(self):
         msg = self._call({"text": "hello world this is a test"}, tool="caveman_stats")
         self.assertNotIn("error", msg)
-        self.assertEqual(msg["metadata"]["language"], "en")
+        self.assertIn("result", msg)
+        self.assertEqual(msg["result"]["metadata"]["language"], "en")
 
     def test_no_stub_leaks_into_sys_modules(self):
         # The target was imported under stubs in an isolated scope and

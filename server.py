@@ -12,7 +12,7 @@ import os
 # Add the caveman-compression directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from caveman_compress_mlm import compress_text, detect_language, SUPPORTED_LANGUAGES
+from caveman_compress_mlm import compress_text, detect_language, SUPPORTED_LANGUAGES, InputTooLongError
 from caveman_compress_nlp import compress_text as compress_text_nlp
 
 app = Flask(__name__)
@@ -87,6 +87,9 @@ def compress():
     if not isinstance(method, str) or method not in METHODS:
         return jsonify({'error': f"'method' must be one of {list(METHODS)}"}), 400
 
+    if method == 'nlp' and (preset != 'lite' or mode != 'sentence'):
+        return jsonify({'error': "'method' 'nlp' only supports preset='lite' and mode='sentence'"}), 400
+
     try:
         # Auto-detect language if not specified
         if language is None:
@@ -109,6 +112,8 @@ def compress():
                     compressed = compress_text_nlp(text, lang=language)
                     model = f"caveman-nlp-{language}"
                     fallback = True
+                except InputTooLongError as e:
+                    return jsonify({'error': str(e)}), 413
             else:
                 compressed = compress_text_nlp(text, lang=language)
                 model = f"caveman-nlp-{language}"
