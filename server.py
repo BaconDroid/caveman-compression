@@ -128,6 +128,10 @@ def compress():
                     compressed = compress_text_nlp(text, lang=language)
                     model = f"caveman-nlp-{language}"
                     fallback = True
+                    # NLP fallback is always lite/sentence; report the actual
+                    # effective preset/mode rather than the requested MLM values.
+                    preset = 'lite'
+                    mode = 'sentence'
                 except InputTooLongError as e:
                     return jsonify({'error': str(e)}), 413
 

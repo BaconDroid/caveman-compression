@@ -196,6 +196,19 @@ class McpProtocolTest(unittest.TestCase):
         self.assertEqual(msg["result"]["metadata"]["model"], "caveman-nlp-en")
         self.assertTrue(msg["result"]["metadata"]["fallback"])
 
+    def test_mlm_fallback_reports_effective_preset_mode(self):
+        # When MLM falls back to NLP, the metadata must report the actual
+        # effective preset='lite' and mode='sentence', not the requested
+        # (unfulfilled) MLM values.
+        _Behavior.mlm_error = OSError("model unavailable")
+        msg = self._call({"text": "hello world", "preset": "ultra", "mode": "text"})
+        self.assertNotIn("error", msg)
+        meta = msg["result"]["metadata"]
+        self.assertEqual(meta["model"], "caveman-nlp-en")
+        self.assertTrue(meta["fallback"])
+        self.assertEqual(meta["preset"], "lite")
+        self.assertEqual(meta["mode"], "sentence")
+
     def test_non_active_language_returns_unchanged(self):
         # Spanish is not an active MLM language (default only en/fr), so the
         # input is returned unchanged rather than NLP-compressed or errored.

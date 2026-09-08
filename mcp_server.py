@@ -211,6 +211,10 @@ def call_caveman_compress(arguments):
                     compressed = compress_text_nlp(text, lang=lang)
                     model = f"caveman-nlp-{lang}"
                     fallback = True
+                    # NLP fallback is always lite/sentence; report the actual
+                    # effective preset/mode rather than the requested MLM values.
+                    preset = "lite"
+                    mode = "sentence"
                 except InputTooLongError:
                     return _invalid_params("Invalid params: 'text' exceeds the MLM sequence length")
 
