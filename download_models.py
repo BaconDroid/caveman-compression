@@ -20,26 +20,19 @@ import tempfile
 import urllib.request
 
 # spaCy pipeline names by language code.
-# spaCy does not ship a Turkish pipeline; "tr" is intentionally absent here.
+# Only en/fr are pre-installed; additional languages can be added via
+# CUSTOM_MLM_MODELS at deployment time.
 SPACY_MODELS = {
     "en": "en_core_web_sm",
     "fr": "fr_core_news_sm",
-    "de": "de_core_news_sm",
-    "es": "es_core_news_sm",
-    "it": "it_core_news_sm",
-    "pt": "pt_core_news_sm",
-    "nl": "nl_core_news_sm",
-    "zh": "zh_core_web_sm",
 }
 
 # HuggingFace MLM model ids by language code.
+# Only en/fr are pre-installed; additional languages can be added via
+# CUSTOM_MLM_MODELS at deployment time.
 MLM_MODELS = {
     "en": "roberta-base",
     "fr": "camembert-base",
-    "de": "bert-base-german-cased",
-    "it": "dbmdz/bert-base-italian-cased",
-    "pt": "neuralmind/bert-base-portuguese-cased",
-    "zh": "bert-base-chinese",
 }
 
 FASTTEXT_URL = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin"
@@ -49,10 +42,17 @@ FASTTEXT_MAX_ATTEMPTS = 2
 
 
 def download_spacy_model(model_name):
-    """Download a spaCy pipeline. Returns True on success."""
+    """Download a spaCy pipeline via pip. Returns True on success.
+
+    Using pip instead of `python -m spacy download` allows installation as a
+    non-root user (e.g. Docker's appuser) because pip installs to the user's
+    site-packages directory.
+    """
     print(f"Downloading spaCy model '{model_name}'...", file=sys.stderr)
     try:
-        subprocess.check_call([sys.executable, "-m", "spacy", "download", model_name])
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir", model_name]
+        )
         print(f"  OK spaCy model '{model_name}' downloaded", file=sys.stderr)
         return True
     except subprocess.CalledProcessError as e:
