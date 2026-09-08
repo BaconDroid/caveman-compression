@@ -26,14 +26,11 @@ COPY mcp_server.py .
 COPY download_models.py .
 COPY entrypoint.sh .
 
-# Provision models during the build so the image is self-contained.
+# Models are downloaded at runtime on first start (see entrypoint.sh).
+# This keeps the image ~1 GB smaller; models are cached in mounted volumes.
 ARG LANGUAGES=en,fr
 ARG CUSTOM_MLM_MODELS=""
 ENV LANGUAGES=${LANGUAGES} CUSTOM_MLM_MODELS=${CUSTOM_MLM_MODELS}
-RUN python download_models.py
-
-# The runtime is offline: all models are already baked into the image.
-ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
 # Run as a non-root user; model caches stay readable/writable by it.
 RUN chmod +x /app/entrypoint.sh \

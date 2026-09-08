@@ -20,18 +20,20 @@ MLM-based text compression for LLM context optimization. Fork of [wilpel/caveman
 ### Docker
 
 ```bash
-# Build (models are provisioned during the build)
+# Build (image is ~1 GB smaller - models download on first start)
 docker build -t caveman-compression .
 
-# Run (models are baked in; the runtime stays offline)
-docker run -p 3000:3000 caveman-compression
+# Run (models download automatically on first start, then cached)
+docker run -p 3000:3000 -v ./hf-cache:/app/.cache/huggingface -v ./spacy-cache:/app/.cache/spacy -v ./models:/app/models caveman-compression
 
-# Customize the languages baked into the image
+# Customize the languages (models download on first start)
 docker build --build-arg LANGUAGES=en,fr,de -t caveman-compression .
 
-# Or with docker-compose
+# Or with docker-compose (volumes configured automatically)
 docker-compose up -d
 ```
+
+Models are downloaded on first container start and cached in mounted volumes. Subsequent starts are fast. Set `DOWNLOAD_MODELS_ON_STARTUP=0` to skip the check.
 
 ### API Usage
 
