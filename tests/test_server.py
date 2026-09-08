@@ -31,7 +31,7 @@ def _fake_mlm_compress(text, language=None, preset="lite", mode="sentence"):
 
 
 _mlm = types.ModuleType("caveman_compress_mlm")
-_mlm.SUPPORTED_LANGUAGES = {"en": {}, "fr": {}, "de": {}}
+_mlm.SUPPORTED_LANGUAGES = {"en": {}, "fr": {}}
 _mlm.detect_language = lambda text: _Behavior.detected
 _mlm.compress_text = _fake_mlm_compress
 _mlm.get_mlm_model = lambda lang: None
@@ -158,6 +158,7 @@ class ServerBoundaryTest(unittest.TestCase):
         body = r.get_json()
         self.assertEqual(body["model"], "caveman-mlm-en")
         self.assertFalse(body["fallback"])
+        self.assertFalse(body["uncompressed"])
 
     def test_success_nlp_method(self):
         r = self.client.post("/compress", json={"text": "hello world", "method": "nlp"})
@@ -174,19 +175,81 @@ class ServerBoundaryTest(unittest.TestCase):
         self.assertEqual(body["model"], "caveman-nlp-en")
         self.assertTrue(body["fallback"])
 
-    def test_mlm_method_nlp_fallback_for_language_without_mlm(self):
-        _Behavior.detected = "es"  # Spanish has no MLM model
+    def test_non_active_language_returns_unchanged(self):
+        # Spanish is not an active MLM language (default only en/fr), so the
+        # input is returned unchanged rather than NLP-compressed or errored.
+        _Behavior.detected = "es"
         r = self.client.post("/compress", json={"text": "hola mundo"})
         self.assertEqual(r.status_code, 200)
         body = r.get_json()
-        self.assertEqual(body["model"], "caveman-nlp-es")
-        self.assertTrue(body["fallback"])
+        self.assertEqual(body["compressed"], "hola mundo")
+        self.assertEqual(body["model"], "caveman-uncompressed-es")
+        self.assertFalse(body["fallback"])
+        self.assertTrue(body["uncompressed"])
+        self.assertEqual(body["compression_ratio"], 1.0)
+        self.assertEqual(body["compressed_size"], body["original_size"])
+
+    def test_non_active_explicit_language_returns_unchanged(self):
+        r = self.client.post("/compress", json={"text": "hola mundo", "language": "es"})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertEqual(body["compressed"], "hola mundo")
+        self.assertEqual(body["model"], "caveman-uncompressed-es")
+        self.assertTrue(body["uncompressed"])
+        self.assertEqual(body["compression_ratio"], 1.0)
+
+    def test_non_active_language_nlp_method_returns_unchanged(self):
+        # Even an explicit method="nlp" must not NLP-compress a non-active
+        # language; the input is returned unchanged instead.
+        _Behavior.detected = "es"
+        r = self.client.post("/compress", json={"text": "hola mundo", "method": "nlp"})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertEqual(body["compressed"], "hola mundo")
+        self.assertEqual(body["model"], "caveman-uncompressed-es")
+        self.assertTrue(body["uncompressed"])
+        self.assertEqual(body["compression_ratio"], 1.0)
 
     def test_mlm_unexpected_error_is_500(self):
         _Behavior.mlm_error = RuntimeError("boom")
         r = self.client.post("/compress", json={"text": "hello world"})
         self.assertEqual(r.status_code, 500)
         self.assertEqual(r.get_json()["error"], "Internal server error")
+
+    def test_detect_language_none_returns_unknown_unchanged(self):
+        # A detector that returns None must be normalized to "unknown" and the
+        # input returned unchanged with a stable model tag (not "None").
+        _Behavior.detected = None
+        r = self.client.post("/compress", json={"text": "some text"})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertEqual(body["compressed"], "some text")
+        self.assertEqual(body["language"], "unknown")
+        self.assertEqual(body["model"], "caveman-uncompressed-unknown")
+        self.assertFalse(body["fallback"])
+        self.assertTrue(body["uncompressed"])
+        self.assertEqual(body["compression_ratio"], 1.0)
+
+    def test_detect_language_unknown_string_returns_unknown_unchanged(self):
+        # A detector that returns the literal "unknown" is unchanged in the
+        # response and the input is returned unchanged.
+        _Behavior.detected = "unknown"
+        r = self.client.post("/compress", json={"text": "some text"})
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertEqual(body["compressed"], "some text")
+        self.assertEqual(body["language"], "unknown")
+        self.assertEqual(body["model"], "caveman-uncompressed-unknown")
+        self.assertTrue(body["uncompressed"])
+        self.assertEqual(body["compression_ratio"], 1.0)
+
+    def test_mlm_input_too_long_returns_413(self):
+        # InputTooLongError raised by an active sentence-mode MLM core call is
+        # surfaced as HTTP 413 (not a generic 500).
+        _Behavior.mlm_error = self.server.InputTooLongError("sequence too long")
+        r = self.client.post("/compress", json={"text": "hello world"})
+        self.assertEqual(r.status_code, 413)
+        self.assertIn("error", r.get_json())
 
 
 if __name__ == "__main__":

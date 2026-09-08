@@ -69,7 +69,7 @@ def handle_request(request):
             "tools": [
                 {
                     "name": "caveman_compress",
-                    "description": "Compress text using Caveman compression (MLM for English/French, NLP for other languages)",
+                    "description": "Compress text using Caveman compression (MLM for active languages such as English/French, returns input unchanged for others)",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -95,7 +95,7 @@ def handle_request(request):
                             },
                             "method": {
                                 "type": "string",
-                                "description": "Compression method: mlm (default, MLM if available, NLP fallback), nlp (force NLP)",
+                                "description": "Compression method: mlm (default) or nlp (force NLP); non-active languages are returned unchanged",
                                 "default": "mlm",
                                 "enum": ["mlm", "nlp"]
                             }
@@ -180,20 +180,28 @@ def call_caveman_compress(arguments):
         return _invalid_params("Invalid params: 'method' 'nlp' only supports preset='lite' and mode='sentence'")
 
     try:
-        lang = language or detect_language(text)
-
-        # Reject incompatible language/mode combinations before inference
-        if lang == "zh" and mode == "text":
-            return _invalid_params("Invalid params: 'mode' 'text' is not supported for Chinese (zh); use mode='sentence'")
+        lang = language or detect_language(text) or "unknown"
 
         fallback = False
+        uncompressed = False
 
-        if method == "nlp":
-            compressed = compress_text_nlp(text, lang=lang)
-            model = f"caveman-nlp-{lang}"
+        if lang not in MLM_LANGUAGES:
+            # Non-active language: return the input unchanged. There is no
+            # provisioned model for this language, so no compression (and no
+            # NLP fallback) is attempted.
+            compressed = text
+            model = f"caveman-uncompressed-{lang}"
+            uncompressed = True
         else:
-            # method="mlm" (default): try MLM, fallback to NLP
-            if lang in MLM_LANGUAGES:
+            # Reject incompatible language/mode combinations before inference
+            if lang == "zh" and mode == "text":
+                return _invalid_params("Invalid params: 'mode' 'text' is not supported for Chinese (zh); use mode='sentence'")
+
+            if method == "nlp":
+                compressed = compress_text_nlp(text, lang=lang)
+                model = f"caveman-nlp-{lang}"
+            else:
+                # method="mlm" (default): try MLM, fallback to NLP
                 try:
                     compressed = compress_text(text, language=lang, preset=preset, mode=mode)
                     model = f"caveman-mlm-{lang}"
@@ -205,10 +213,6 @@ def call_caveman_compress(arguments):
                     fallback = True
                 except InputTooLongError:
                     return _invalid_params("Invalid params: 'text' exceeds the MLM sequence length")
-            else:
-                compressed = compress_text_nlp(text, lang=lang)
-                model = f"caveman-nlp-{lang}"
-                fallback = True
 
         return {
             "content": [{"type": "text", "text": compressed}],
@@ -218,6 +222,7 @@ def call_caveman_compress(arguments):
                 "preset": preset,
                 "mode": mode,
                 "fallback": fallback,
+                "uncompressed": uncompressed,
                 "original_size": len(text),
                 "compressed_size": len(compressed),
                 "compression_ratio": len(compressed) / len(text) if text else 0

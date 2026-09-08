@@ -7,11 +7,11 @@ No LLM API required - uses local models for deterministic compression.
 
 import sys
 import os
-import json
 import argparse
 from pathlib import Path
 
 from caveman_compress_nlp import ModelUnavailableError
+from language_catalog import MLM_LANGUAGE_CATALOGUE, load_active_languages
 
 try:
     import torch
@@ -42,73 +42,13 @@ MAX_SEQ_LENGTH = 512
 class InputTooLongError(ValueError):
     """Raised when the tokenized input exceeds MAX_SEQ_LENGTH for MLM inference."""
 
-# Default supported languages (only en/fr are pre-installed).
-# All LT n-gram languages are mapped; additional languages can be added via
-# CUSTOM_MLM_MODELS at deployment time.
-DEFAULT_LANGUAGES = {
-    "en": {"model": "roberta-base", "spacy": "en_core_web_sm"},
-    "fr": {"model": "camembert-base", "spacy": "fr_core_news_sm"},
-    "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
-    "es": {"model": "dccuchile/bert-base-spanish-wwm-cased", "spacy": "es_core_news_sm"},
-}
-
-# Load custom models from environment variable
-# Format: CUSTOM_MLM_MODELS='{"sv": {"model": "KB/bert-base-swedish-cased", "spacy": "sv_core_news_sm"}}'
-def _load_custom_models():
-    """Load custom MLM models from the CUSTOM_MLM_MODELS environment variable.
-
-    Expects a JSON object mapping language codes to config objects that carry a
-    non-empty "model" string and a non-empty "spacy" pipeline. Invalid entries
-    (non-mapping values or entries without a non-empty "model" or "spacy") are
-    skipped with a warning.
-    """
-    custom_json = os.environ.get("CUSTOM_MLM_MODELS")
-    if not custom_json:
-        return {}
-
-    try:
-        custom = json.loads(custom_json)
-    except json.JSONDecodeError as e:
-        print(f"Warning: Invalid CUSTOM_MLM_MODELS JSON: {e}", file=sys.stderr)
-        return {}
-
-    if not isinstance(custom, dict):
-        print("Warning: CUSTOM_MLM_MODELS must be a JSON object; ignoring.", file=sys.stderr)
-        return {}
-
-    valid = {}
-    for lang, config in custom.items():
-        if not isinstance(lang, str) or not isinstance(config, dict):
-            print(
-                f"Warning: Skipping invalid CUSTOM_MLM_MODELS entry for '{lang}': "
-                "expected a config object",
-                file=sys.stderr,
-            )
-            continue
-        model = config.get("model")
-        if not isinstance(model, str) or not model.strip():
-            print(
-                f"Warning: Skipping CUSTOM_MLM_MODELS entry for '{lang}': "
-                "missing non-empty 'model'",
-                file=sys.stderr,
-            )
-            continue
-        spacy = config.get("spacy")
-        if not isinstance(spacy, str) or not spacy.strip():
-            print(
-                f"Warning: Skipping CUSTOM_MLM_MODELS entry for '{lang}': "
-                "missing non-empty 'spacy'",
-                file=sys.stderr,
-            )
-            continue
-        valid[lang] = config
-
-    if valid:
-        print(f"Loading custom MLM models: {list(valid.keys())}", file=sys.stderr)
-    return valid
-
-# Merge default and custom languages
-SUPPORTED_LANGUAGES = {**DEFAULT_LANGUAGES, **_load_custom_models()}
+# SUPPORTED_LANGUAGES is derived from the checked-in-image manifest written at
+# build time (see language_catalog.load_active_languages). The runtime never
+# activates languages from mutable environment variables: LANGUAGES and
+# CUSTOM_MLM_MODELS are build-time configuration only. When the manifest is
+# absent (local development without a build), the fallback is the default
+# en/fr pair resolved from the catalogue.
+SUPPORTED_LANGUAGES = load_active_languages()
 
 def get_fasttext_model():
     """Get or load the fastText language detection model.
@@ -151,7 +91,13 @@ def get_fasttext_model():
     return _fasttext_model
 
 def detect_language(text):
-    """Detect language using fastText (primary) or a word-list heuristic (fallback)."""
+    """Detect language using fastText (primary) or a word-list heuristic (fallback).
+
+    Returns a language code ("en"/"fr"/...), or None when no language can be
+    determined. The word-list heuristic only classifies English or French, so
+    text with no positive evidence for either returns None instead of being
+    misclassified as English; callers then return the input unchanged.
+    """
     # Try fastText first (faster and more accurate)
     ft_model = get_fasttext_model()
     if ft_model is not None:
@@ -165,15 +111,19 @@ def detect_language(text):
                 return lang_code
         except Exception:
             pass
-    
-    # Simple heuristic fallback
+
+    # Simple heuristic fallback (en/fr only). With no positive English or
+    # French evidence, return None so the caller leaves the text unchanged
+    # rather than guessing English.
     french_words = {"le", "la", "les", "de", "des", "du", "un", "une", "et", "est", "sont", "avoir", "être", "faire"}
     english_words = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does"}
-    
+
     words = set(text.lower().split())
     french_count = len(words & french_words)
     english_count = len(words & english_words)
-    
+
+    if french_count == 0 and english_count == 0:
+        return None
     return "fr" if french_count > english_count else "en"
 
 def get_nlp_model(lang_code):
@@ -214,11 +164,13 @@ def get_mlm_model(lang_code):
 
         print(f"Loading MLM model '{model_name}' for language '{lang_code}'...", file=sys.stderr)
 
-        # Use Auto classes for generic model loading
+        # Use Auto classes for generic model loading. local_files_only=True
+        # enforces offline loading: the runtime must use the models provisioned
+        # into the image at build time and never reach the HuggingFace hub.
         from transformers import AutoTokenizer, AutoModelForMaskedLM
         try:
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModelForMaskedLM.from_pretrained(model_name)
+            tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
+            model = AutoModelForMaskedLM.from_pretrained(model_name, local_files_only=True)
         except OSError as e:
             raise ModelUnavailableError(
                 f"MLM model '{model_name}' not available for language '{lang_code}': {e}"
@@ -240,7 +192,7 @@ def get_mlm_model(lang_code):
 def get_mlm_probability(lang_code, sentence, word_idx):
     """Get MLM probability for a specific whitespace-split word in a sentence.
 
-    Raises ValueError if the masked sentence exceeds MAX_SEQ_LENGTH tokens.
+    Raises InputTooLongError if the masked sentence exceeds MAX_SEQ_LENGTH tokens.
     """
     model_data = get_mlm_model(lang_code)
     model = model_data["model"]
@@ -258,7 +210,7 @@ def get_mlm_probability(lang_code, sentence, word_idx):
 
     inputs = tokenizer(masked_sentence, return_tensors="pt").to(device)
     if inputs.input_ids.size(1) > MAX_SEQ_LENGTH:
-        raise ValueError(
+        raise InputTooLongError(
             f"Input sentence too long for MLM inference "
             f"({inputs.input_ids.size(1)} tokens > {MAX_SEQ_LENGTH} max)"
         )
@@ -286,7 +238,11 @@ def get_mlm_probability(lang_code, sentence, word_idx):
 def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sentence", calibrate_from_nlp=True, no_adjacent_removal=False, protect_ner=True):
     """
     Apply MLM-based compression by removing words whose predictability exceeds threshold.
-    
+
+    Languages not activated in the build-time manifest (default "en,fr") are
+    returned unchanged: catalogued-but-inactive languages (de/es) and unknown
+    codes pass through without touching the MLM/NLP models and without erroring.
+
     Args:
         text: Input text to compress
         language: Language code (auto-detect if None)
@@ -300,19 +256,30 @@ def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sen
     Raises:
         ValueError: If text exceeds MAX_INPUT_LENGTH, or text mode is requested
             for Chinese (zh).
-        InputTooLongError: If the tokenized input exceeds MAX_SEQ_LENGTH.
-        ModelUnavailableError: If no model is available for the language.
+        InputTooLongError: If the tokenized input exceeds MAX_SEQ_LENGTH for a
+            single MLM inference pass (text-mode full-text preflight, or a
+            per-sentence input in get_mlm_probability).
+        ModelUnavailableError: If an activated language's model cannot be loaded.
     """
     if not text or not text.strip():
         return text
-    if len(text) > MAX_INPUT_LENGTH:
-        raise ValueError(
-            f"Input text too long: {len(text)} chars exceeds limit of {MAX_INPUT_LENGTH}"
-        )
 
     # Auto-detect language if not specified
     if language is None:
         language = detect_language(text)
+
+    # Inactive or undetermined language: return the input unchanged. Only
+    # languages activated in the build-time manifest (default "en,fr") are
+    # compressed. Catalogued-but-inactive languages (de/es), unknown codes, and
+    # a None result from auto-detection pass through without touching the
+    # MLM/NLP models and without erroring.
+    if language not in SUPPORTED_LANGUAGES:
+        return text
+
+    if len(text) > MAX_INPUT_LENGTH:
+        raise ValueError(
+            f"Input text too long: {len(text)} chars exceeds limit of {MAX_INPUT_LENGTH}"
+        )
 
     # Chinese text mode cannot split words on whitespace, so it would return
     # the input unchanged. Reject it explicitly instead.
@@ -321,16 +288,20 @@ def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sen
             "text mode is not supported for Chinese (zh); use mode='sentence'"
         )
 
-    # Load the active language's tokenizer and verify the tokenized input fits
-    # the model's sequence bound before compressing. No truncation is applied.
-    model_data = get_mlm_model(language)
-    tokenizer = model_data["tokenizer"]
-    n_tokens = len(tokenizer.encode(text, truncation=False))
-    if n_tokens > MAX_SEQ_LENGTH:
-        raise InputTooLongError(
-            f"Input text too long for MLM inference: {n_tokens} tokens exceeds "
-            f"MAX_SEQ_LENGTH of {MAX_SEQ_LENGTH}"
-        )
+    # Text mode feeds the full text into MLM inference per word, so verify the
+    # tokenized input fits the model's sequence bound before compressing. No
+    # truncation is applied. Sentence mode skips this preflight: each sentence
+    # is bound-checked individually in get_mlm_probability, so a long
+    # multi-sentence input is fine as long as each sentence fits.
+    if mode == "text":
+        model_data = get_mlm_model(language)
+        tokenizer = model_data["tokenizer"]
+        n_tokens = len(tokenizer.encode(text, truncation=False))
+        if n_tokens > MAX_SEQ_LENGTH:
+            raise InputTooLongError(
+                f"Input text too long for MLM inference: {n_tokens} tokens exceeds "
+                f"MAX_SEQ_LENGTH of {MAX_SEQ_LENGTH}"
+            )
 
     # Get NLP model for tokenization and NER
     nlp = get_nlp_model(language)

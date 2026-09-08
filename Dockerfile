@@ -4,6 +4,7 @@ FROM python:3.11-slim
 # runtime regardless of which user the process runs as.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
     HF_HOME=/app/.cache/huggingface \
     TRANSFORMERS_CACHE=/app/.cache/huggingface/transformers
 
@@ -21,18 +22,22 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code.
 COPY caveman_compress_mlm.py .
 COPY caveman_compress_nlp.py .
+COPY language_catalog.py .
 COPY server.py .
 COPY mcp_server.py .
 COPY download_models.py .
 COPY entrypoint.sh .
 
-# Models are downloaded at runtime on first start (see entrypoint.sh).
-# This keeps the image ~1 GB smaller; models are cached in mounted volumes.
+# LANGUAGES and CUSTOM_MLM_MODELS are build-time configuration only. They are
+# consumed by download_models.py during provisioning, which records the result
+# in a checked-in-image manifest. They are deliberately NOT persisted as
+# runtime ENV, so a running container's active-language set is frozen to the
+# build and cannot be reconfigured via environment variables.
 ARG LANGUAGES=en,fr
 ARG CUSTOM_MLM_MODELS=""
-ENV LANGUAGES=${LANGUAGES} CUSTOM_MLM_MODELS=${CUSTOM_MLM_MODELS}
+RUN python download_models.py
 
-# Run as a non-root user; model caches stay readable/writable by it.
+# Drop privileges after provisioning. The runtime is offline and non-root.
 RUN chmod +x /app/entrypoint.sh \
     && useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app

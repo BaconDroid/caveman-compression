@@ -2,7 +2,8 @@
 """
 Caveman Compression HTTP Server
 Runs on Unraid, provides MLM-based text compression via HTTP API.
-Uses fastText for language detection, MLM for en/fr, NLP fallback for others.
+Uses fastText for language detection; MLM for active languages (en/fr by
+default), returns the input unchanged for all others.
 """
 
 from flask import Flask, request, jsonify
@@ -91,22 +92,33 @@ def compress():
         return jsonify({'error': "'method' 'nlp' only supports preset='lite' and mode='sentence'"}), 400
 
     try:
-        # Auto-detect language if not specified
+        # Auto-detect language if not specified. A detector that cannot
+        # classify the input returns None or "unknown"; normalize to "unknown"
+        # so the response never leaks a None model tag.
         if language is None:
-            language = detect_language(text)
-
-        # Reject incompatible language/mode combinations before inference
-        if language == 'zh' and mode == 'text':
-            return jsonify({'error': "'mode' 'text' is not supported for Chinese (zh); use mode='sentence'"}), 400
+            language = detect_language(text) or "unknown"
 
         fallback = False
-        if method == 'nlp':
-            # Force NLP mode
-            compressed = compress_text_nlp(text, lang=language)
-            model = f"caveman-nlp-{language}"
+        uncompressed = False
+
+        if language not in MLM_LANGUAGES:
+            # Non-active language: return the input unchanged. There is no
+            # provisioned model for this language, so no compression (and no
+            # NLP fallback) is attempted.
+            compressed = text
+            model = f"caveman-uncompressed-{language}"
+            uncompressed = True
         else:
-            # method="mlm" (default): try MLM, fallback to NLP
-            if language in MLM_LANGUAGES:
+            # Reject incompatible language/mode combinations before inference
+            if language == 'zh' and mode == 'text':
+                return jsonify({'error': "'mode' 'text' is not supported for Chinese (zh); use mode='sentence'"}), 400
+
+            if method == 'nlp':
+                # Force NLP mode
+                compressed = compress_text_nlp(text, lang=language)
+                model = f"caveman-nlp-{language}"
+            else:
+                # method="mlm" (default): try MLM, fallback to NLP
                 try:
                     compressed = compress_text(text, language=language, preset=preset, mode=mode)
                     model = f"caveman-mlm-{language}"
@@ -118,10 +130,6 @@ def compress():
                     fallback = True
                 except InputTooLongError as e:
                     return jsonify({'error': str(e)}), 413
-            else:
-                compressed = compress_text_nlp(text, lang=language)
-                model = f"caveman-nlp-{language}"
-                fallback = True
 
         return jsonify({
             'compressed': compressed,
@@ -130,6 +138,7 @@ def compress():
             'preset': preset,
             'mode': mode,
             'fallback': fallback,
+            'uncompressed': uncompressed,
             'original_size': len(text),
             'compressed_size': len(compressed),
             'compression_ratio': len(compressed) / len(text) if text else 0
