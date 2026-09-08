@@ -11,7 +11,7 @@ import os
 # Add the caveman-compression directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from caveman_compress_mlm import compress_text, detect_language, SUPPORTED_LANGUAGES
+from caveman_compress_mlm import compress_text, detect_language, SUPPORTED_LANGUAGES, InputTooLongError
 from caveman_compress_nlp import compress_text as compress_text_nlp
 
 # MCP Protocol Constants
@@ -19,6 +19,7 @@ MCP_VERSION = "2024-11-05"
 
 # Input constraints
 MAX_INPUT_LENGTH = 4096
+MAX_LINE_LENGTH = 8192  # bytes per stdin line (JSON-RPC message)
 PRESETS = ("lite", "full", "ultra")
 MODES = ("sentence", "text")
 METHODS = ("mlm", "nlp")
@@ -38,6 +39,16 @@ def _invalid_params(message):
 
 def handle_request(request):
     """Handle a decoded JSON-RPC request object."""
+    if request.get("jsonrpc") != "2.0":
+        return {"error": {"code": -32600, "message": "Invalid Request: 'jsonrpc' must be '2.0'"}}
+
+    request_id = request.get("id")
+    if "id" in request and not (
+        isinstance(request_id, str)
+        or (isinstance(request_id, int) and not isinstance(request_id, bool))
+    ):
+        return {"error": {"code": -32600, "message": "Invalid Request: 'id' must be a string or a non-boolean integer"}}
+
     method = request.get("method")
     params = request.get("params", {})
 
@@ -165,6 +176,9 @@ def call_caveman_compress(arguments):
     if not isinstance(method, str) or method not in METHODS:
         return _invalid_params(f"Invalid params: 'method' must be one of {list(METHODS)}")
 
+    if method == "nlp" and (preset != "lite" or mode != "sentence"):
+        return _invalid_params("Invalid params: 'method' 'nlp' only supports preset='lite' and mode='sentence'")
+
     try:
         lang = language or detect_language(text)
         fallback = False
@@ -184,6 +198,8 @@ def call_caveman_compress(arguments):
                     compressed = compress_text_nlp(text, lang=lang)
                     model = f"caveman-nlp-{lang}"
                     fallback = True
+                except InputTooLongError:
+                    return _invalid_params("Invalid params: 'text' exceeds the MLM sequence length")
             else:
                 compressed = compress_text_nlp(text, lang=lang)
                 model = f"caveman-nlp-{lang}"
@@ -241,6 +257,16 @@ def process_line(line):
     required (blank line, notification, or anything without a valid id).
     Never raises; all failures are converted to JSON-RPC error responses.
     """
+    # Reject oversized lines (content over MAX_LINE_LENGTH bytes) and drain the
+    # remainder so the stream stays aligned for the next message.
+    content = line[:-1] if line.endswith("\n") else line
+    if len(content.encode("utf-8")) > MAX_LINE_LENGTH:
+        while not line.endswith("\n"):
+            line = sys.stdin.readline(MAX_LINE_LENGTH)
+            if not line:
+                break
+        return json.dumps(error_response(-32600, "Invalid Request: line too long", None))
+
     line = line.strip()
     if not line:
         return None
@@ -271,9 +297,18 @@ def process_line(line):
     if result is None:
         return None
 
-    response = dict(result)
-    response["jsonrpc"] = "2.0"
-    response["id"] = request_id
+    if "error" in result:
+        response = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": result["error"],
+        }
+    else:
+        response = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": result,
+        }
     return json.dumps(response)
 
 
@@ -289,7 +324,10 @@ def main():
 
     print("Caveman Compression MCP Server ready", file=sys.stderr)
 
-    for line in sys.stdin:
+    while True:
+        line = sys.stdin.readline(MAX_LINE_LENGTH + 1)
+        if not line:
+            break
         response = process_line(line)
         if response is not None:
             print(response, flush=True)

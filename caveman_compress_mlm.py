@@ -38,6 +38,10 @@ MAX_INPUT_LENGTH = 4096
 # Maximum token sequence accepted for a single MLM inference pass.
 MAX_SEQ_LENGTH = 512
 
+
+class InputTooLongError(ValueError):
+    """Raised when the tokenized input exceeds MAX_SEQ_LENGTH for MLM inference."""
+
 # Default supported languages
 DEFAULT_LANGUAGES = {
     "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
@@ -294,7 +298,9 @@ def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sen
         protect_ner: If True, don't remove named entities
 
     Raises:
-        ValueError: If text exceeds MAX_INPUT_LENGTH.
+        ValueError: If text exceeds MAX_INPUT_LENGTH, or text mode is requested
+            for Chinese (zh).
+        InputTooLongError: If the tokenized input exceeds MAX_SEQ_LENGTH.
         ModelUnavailableError: If no model is available for the language.
     """
     if not text or not text.strip():
@@ -307,13 +313,28 @@ def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sen
     # Auto-detect language if not specified
     if language is None:
         language = detect_language(text)
-    
+
+    # Chinese text mode cannot split words on whitespace, so it would return
+    # the input unchanged. Reject it explicitly instead.
+    if mode == "text" and language == "zh":
+        raise ValueError(
+            "text mode is not supported for Chinese (zh); use mode='sentence'"
+        )
+
+    # Load the active language's tokenizer and verify the tokenized input fits
+    # the model's sequence bound before compressing. No truncation is applied.
+    model_data = get_mlm_model(language)
+    tokenizer = model_data["tokenizer"]
+    n_tokens = len(tokenizer.encode(text, truncation=False))
+    if n_tokens > MAX_SEQ_LENGTH:
+        raise InputTooLongError(
+            f"Input text too long for MLM inference: {n_tokens} tokens exceeds "
+            f"MAX_SEQ_LENGTH of {MAX_SEQ_LENGTH}"
+        )
+
     # Get NLP model for tokenization and NER
     nlp = get_nlp_model(language)
     doc = nlp(text)
-    
-    # Get MLM model
-    get_mlm_model(language)
     
     # Calculate drop_ratio from NLP if needed
     if drop_ratio is None and calibrate_from_nlp:

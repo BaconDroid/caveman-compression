@@ -35,6 +35,7 @@ _mlm.SUPPORTED_LANGUAGES = {"en": {}, "fr": {}, "de": {}}
 _mlm.detect_language = lambda text: _Behavior.detected
 _mlm.compress_text = _fake_mlm_compress
 _mlm.get_mlm_model = lambda lang: None
+_mlm.InputTooLongError = type("InputTooLongError", (ValueError,), {})
 
 _nlp = types.ModuleType("caveman_compress_nlp")
 _nlp.compress_text = lambda text, lang="en": _Behavior.nlp_result

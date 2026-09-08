@@ -12,6 +12,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -162,6 +163,50 @@ class TestNerProtectionWithPunctuation(unittest.TestCase):
         # Named entities must survive even at a high drop ratio.
         for word in ("John", "Smith", "Paris.", "New", "York."):
             self.assertIn(word, out)
+
+
+class _FakeTokenizer:
+    """Returns a fixed token count regardless of input, for token-bound tests."""
+
+    def __init__(self, n_tokens):
+        self.n_tokens = n_tokens
+
+    def encode(self, text, truncation=False):
+        return list(range(self.n_tokens))
+
+
+class TestTokenBound(unittest.TestCase):
+    def test_input_too_long_error_is_exported_valueerror(self):
+        self.assertTrue(issubclass(mlm.InputTooLongError, ValueError))
+
+    def test_over_512_tokens_under_4096_chars_raises(self):
+        # Short in characters (far below MAX_INPUT_LENGTH) but the tokenizer
+        # output exceeds MAX_SEQ_LENGTH: the token bound, not the char bound,
+        # must reject the input.
+        text = "word " * 200  # 1000 chars, well under 4096
+        fake = _FakeTokenizer(mlm.MAX_SEQ_LENGTH + 1)
+        with mock.patch.object(mlm, "get_mlm_model", return_value={"tokenizer": fake}):
+            with self.assertRaises(mlm.InputTooLongError):
+                mlm.compress_text(text, language="en")
+
+    def test_at_limit_does_not_raise_token_error(self):
+        # Exactly MAX_SEQ_LENGTH tokens must pass the token bound and continue
+        # into the pipeline (reaching the NLP stage here).
+        fake = _FakeTokenizer(mlm.MAX_SEQ_LENGTH)
+
+        def _reach_nlp(lang):
+            raise RuntimeError("reached nlp stage")
+
+        with mock.patch.object(mlm, "get_mlm_model", return_value={"tokenizer": fake}), \
+                mock.patch.object(mlm, "get_nlp_model", side_effect=_reach_nlp):
+            with self.assertRaises(RuntimeError):
+                mlm.compress_text("test", language="en")
+
+
+class TestZhTextModeRejected(unittest.TestCase):
+    def test_text_mode_rejected(self):
+        with self.assertRaises(ValueError):
+            mlm.compress_text("你好世界 hello world", language="zh", mode="text")
 
 
 if __name__ == "__main__":
