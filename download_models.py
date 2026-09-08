@@ -2,11 +2,12 @@
 """
 Download ML models for Caveman Compression.
 
-Runs during the Docker build to provision models into the immutable image.
-May also run at container startup when DOWNLOAD_MODELS_ON_STARTUP=1 is set.
+Runs during the Docker build (as root) to provision models into the immutable
+image. The runtime is offline and never downloads models.
 
 Exit codes:
-    0 - success (spaCy/MLM models downloaded; fastText failure is non-fatal)
+    0 - success (spaCy/MLM models downloaded and the language manifest written;
+        fastText failure is non-fatal)
     1 - invalid custom model configuration, or a requested spaCy/MLM model
         failed to download
 """
@@ -14,26 +15,24 @@ Exit codes:
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import urllib.request
 
-# spaCy pipeline names by language code.
-# Only en/fr are pre-installed; additional languages can be added via
-# CUSTOM_MLM_MODELS at deployment time.
-SPACY_MODELS = {
-    "en": "en_core_web_sm",
-    "fr": "fr_core_news_sm",
-}
+from language_catalog import (
+    DEFAULT_LANGUAGES,
+    MANIFEST_PATH,
+    MLM_LANGUAGE_CATALOGUE,
+    write_language_manifest,
+)
 
-# HuggingFace MLM model ids by language code.
-# Only en/fr are pre-installed; additional languages can be added via
-# CUSTOM_MLM_MODELS at deployment time.
-MLM_MODELS = {
-    "en": "roberta-base",
-    "fr": "camembert-base",
-}
+# spaCy pipeline names and HuggingFace MLM model ids by language code, derived
+# from the shared catalogue in language_catalog.py. The catalogue is the single
+# source of truth; these flat projections exist only for the downloader's
+# convenience and cover the full catalogue (en/de/fr/es). Additional languages
+# can be supplied via CUSTOM_MLM_MODELS at build time.
+SPACY_MODELS = {lang: cfg["spacy"] for lang, cfg in MLM_LANGUAGE_CATALOGUE.items()}
+MLM_MODELS = {lang: cfg["model"] for lang, cfg in MLM_LANGUAGE_CATALOGUE.items()}
 
 FASTTEXT_URL = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin"
 FASTTEXT_PATH = "/app/models/lid.176.bin"
@@ -42,20 +41,29 @@ FASTTEXT_MAX_ATTEMPTS = 2
 
 
 def download_spacy_model(model_name):
-    """Download a spaCy pipeline via pip. Returns True on success.
+    """Download a spaCy pipeline via spaCy's resolver. Returns True on success.
 
-    Using pip instead of `python -m spacy download` allows installation as a
-    non-root user (e.g. Docker's appuser) because pip installs to the user's
-    site-packages directory.
+    spaCy's resolver (``spacy.cli.download``) selects the pipeline version
+    compatible with the installed spaCy release before installing it. This
+    replaces the former ``pip install <pipeline-name>`` approach and runs
+    during the image build, where the process runs as root.
     """
     print(f"Downloading spaCy model '{model_name}'...", file=sys.stderr)
     try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--no-cache-dir", model_name]
-        )
+        from spacy.cli import download as spacy_download
+
+        spacy_download(model_name)
         print(f"  OK spaCy model '{model_name}' downloaded", file=sys.stderr)
         return True
-    except subprocess.CalledProcessError as e:
+    except SystemExit as e:
+        # spaCy's downloader calls sys.exit on resolution or install failure.
+        print(
+            f"  FAILED to download spaCy model '{model_name}': "
+            f"spaCy resolver exited with code {e.code}",
+            file=sys.stderr,
+        )
+        return False
+    except Exception as e:
         print(f"  FAILED to download spaCy model '{model_name}': {e}", file=sys.stderr)
         return False
 
@@ -214,7 +222,7 @@ def parse_custom_models(custom_json):
 
 
 def main():
-    languages_env = os.environ.get("LANGUAGES", "en,fr")
+    languages_env = os.environ.get("LANGUAGES", DEFAULT_LANGUAGES)
     languages = [lang.strip() for lang in languages_env.split(",") if lang.strip()]
     print(f"Downloading models for languages: {', '.join(languages)}", file=sys.stderr)
 
@@ -270,6 +278,17 @@ def main():
             file=sys.stderr,
         )
         return 1
+
+    # Write the checked-in-image manifest of successfully provisioned active
+    # languages (including any custom build models). The runtime core reads this
+    # manifest and never consults LANGUAGES / CUSTOM_MLM_MODELS environment
+    # variables, so the active-language set is frozen to this build.
+    manifest = {
+        lang: {"model": mlm_models[lang], "spacy": spacy_models[lang]}
+        for lang in languages
+    }
+    write_language_manifest(MANIFEST_PATH, manifest)
+    print(f"Wrote language manifest to {MANIFEST_PATH}", file=sys.stderr)
 
     print("\nModel downloads complete!", file=sys.stderr)
     return 0

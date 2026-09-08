@@ -1,5 +1,6 @@
 """Focused tests for download_models.py provisioning logic (no network)."""
 
+import json
 import os
 import sys
 import tempfile
@@ -7,6 +8,7 @@ import unittest
 from unittest import mock
 
 import download_models
+import language_catalog
 
 
 class CustomModelConfigTests(unittest.TestCase):
@@ -70,6 +72,8 @@ class ExitCodeTests(unittest.TestCase):
                 download_models, "download_mlm_model", return_value=True
             ), mock.patch.object(
                 download_models, "download_fasttext_model", return_value=None
+            ), mock.patch.object(
+                download_models, "write_language_manifest", return_value=None
             ):
                 self.assertEqual(download_models.main(), 0)
 
@@ -180,6 +184,175 @@ class FastTextValidationTests(unittest.TestCase):
                         download_models.download_fasttext_model()
             self.assertEqual(dl.call_count, download_models.FASTTEXT_MAX_ATTEMPTS)
             self.assertFalse(os.path.exists(dest))
+
+
+class CatalogueProvisioningTests(unittest.TestCase):
+    """The downloader provisions from the shared catalogue; de/es need no CUSTOM."""
+
+    def test_catalogue_is_single_source(self):
+        self.assertIs(
+            download_models.MLM_LANGUAGE_CATALOGUE,
+            language_catalog.MLM_LANGUAGE_CATALOGUE,
+        )
+        self.assertEqual(
+            set(language_catalog.MLM_LANGUAGE_CATALOGUE), {"en", "de", "fr", "es"}
+        )
+
+    def test_default_languages_provision_only_en_fr(self):
+        # With the default LANGUAGES (en,fr), de/es must not be provisioned.
+        spacy_calls = []
+        mlm_calls = []
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with mock.patch.object(
+                download_models, "download_spacy_model",
+                side_effect=lambda name: spacy_calls.append(name) or True,
+            ), mock.patch.object(
+                download_models, "download_mlm_model",
+                side_effect=lambda name, lang: mlm_calls.append(name) or True,
+            ), mock.patch.object(
+                download_models, "download_fasttext_model", return_value=None,
+            ), mock.patch.object(
+                download_models, "write_language_manifest", return_value=None,
+            ):
+                self.assertEqual(download_models.main(), 0)
+        self.assertEqual(set(spacy_calls), {"en_core_web_sm", "fr_core_news_sm"})
+        self.assertEqual(set(mlm_calls), {"roberta-base", "camembert-base"})
+
+    def test_languages_en_fr_de_provisions_de_without_custom(self):
+        # de is in the catalogue, so LANGUAGES=en,fr,de provisions it with no
+        # CUSTOM_MLM_MODELS.
+        spacy_calls = []
+        mlm_calls = []
+        env = {"LANGUAGES": "en,fr,de"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(
+                download_models, "download_spacy_model",
+                side_effect=lambda name: spacy_calls.append(name) or True,
+            ), mock.patch.object(
+                download_models, "download_mlm_model",
+                side_effect=lambda name, lang: mlm_calls.append(name) or True,
+            ), mock.patch.object(
+                download_models, "download_fasttext_model", return_value=None,
+            ), mock.patch.object(
+                download_models, "write_language_manifest", return_value=None,
+            ):
+                self.assertEqual(download_models.main(), 0)
+        self.assertIn("de_core_news_sm", spacy_calls)
+        self.assertIn("bert-base-german-cased", mlm_calls)
+
+    def test_languages_es_provisions_es_without_custom(self):
+        spacy_calls = []
+        mlm_calls = []
+        env = {"LANGUAGES": "es"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(
+                download_models, "download_spacy_model",
+                side_effect=lambda name: spacy_calls.append(name) or True,
+            ), mock.patch.object(
+                download_models, "download_mlm_model",
+                side_effect=lambda name, lang: mlm_calls.append(name) or True,
+            ), mock.patch.object(
+                download_models, "download_fasttext_model", return_value=None,
+            ), mock.patch.object(
+                download_models, "write_language_manifest", return_value=None,
+            ):
+                self.assertEqual(download_models.main(), 0)
+        self.assertIn("es_core_news_sm", spacy_calls)
+        self.assertIn("dccuchile/bert-base-spanish-wwm-cased", mlm_calls)
+
+
+class LanguageManifestTests(unittest.TestCase):
+    """A successful build writes a checked-in-image manifest of active languages."""
+
+    def _run_main(self, languages=None, custom=""):
+        env = {}
+        if languages is not None:
+            env["LANGUAGES"] = languages
+        if custom:
+            env["CUSTOM_MLM_MODELS"] = custom
+        with mock.patch.dict(os.environ, env, clear=True):
+            with mock.patch.object(
+                download_models, "download_spacy_model", return_value=True
+            ), mock.patch.object(
+                download_models, "download_mlm_model", return_value=True
+            ), mock.patch.object(
+                download_models, "download_fasttext_model", return_value=None
+            ):
+                self.assertEqual(download_models.main(), 0)
+
+    def _read_manifest(self, tmpdir):
+        with open(os.path.join(tmpdir, "languages.json")) as f:
+            return json.load(f)
+
+    def test_manifest_records_default_en_fr(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "languages.json")
+            with mock.patch.object(download_models, "MANIFEST_PATH", manifest_path):
+                self._run_main()
+            manifest = self._read_manifest(tmpdir)
+        self.assertEqual(set(manifest), {"en", "fr"})
+        self.assertEqual(manifest["en"], {"model": "roberta-base", "spacy": "en_core_web_sm"})
+        self.assertEqual(manifest["fr"], {"model": "camembert-base", "spacy": "fr_core_news_sm"})
+
+    def test_manifest_includes_custom_model(self):
+        custom = '{"sv": {"model": "KB/bert-base-swedish-cased", "spacy": "sv_core_news_sm"}}'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "languages.json")
+            with mock.patch.object(download_models, "MANIFEST_PATH", manifest_path):
+                self._run_main(languages="en,fr,sv", custom=custom)
+            manifest = self._read_manifest(tmpdir)
+        self.assertEqual(
+            manifest["sv"],
+            {"model": "KB/bert-base-swedish-cased", "spacy": "sv_core_news_sm"},
+        )
+
+    def test_manifest_excludes_unrequested_catalogue_languages(self):
+        # de/es are in the catalogue but not requested; they must not appear in
+        # the manifest.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "languages.json")
+            with mock.patch.object(download_models, "MANIFEST_PATH", manifest_path):
+                self._run_main(languages="en")
+            manifest = self._read_manifest(tmpdir)
+        self.assertEqual(set(manifest), {"en"})
+
+    def test_manifest_writes_full_catalogue_config(self):
+        # LANGUAGES=en,fr,de provisions de from the catalogue and records its
+        # model/spacy mapping in the manifest.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "languages.json")
+            with mock.patch.object(download_models, "MANIFEST_PATH", manifest_path):
+                self._run_main(languages="en,fr,de")
+            manifest = self._read_manifest(tmpdir)
+        self.assertEqual(
+            manifest["de"],
+            {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
+        )
+
+
+def _spacy_cli_available():
+    try:
+        import spacy.cli  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+HAS_SPACY_CLI = _spacy_cli_available()
+
+
+@unittest.skipUnless(HAS_SPACY_CLI, "spacy.cli not installed")
+class SpaCyResolverTests(unittest.TestCase):
+    """spaCy pipelines are provisioned via spaCy's resolver, not raw pip."""
+
+    def test_download_spacy_model_uses_spacy_resolver(self):
+        with mock.patch("spacy.cli.download") as spacy_download:
+            self.assertTrue(download_models.download_spacy_model("en_core_web_sm"))
+        spacy_download.assert_called_once_with("en_core_web_sm")
+
+    def test_download_spacy_model_resolver_failure_returns_false(self):
+        with mock.patch("spacy.cli.download", side_effect=SystemExit(1)):
+            self.assertFalse(download_models.download_spacy_model("en_core_web_sm"))
 
 
 if __name__ == "__main__":
