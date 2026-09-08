@@ -194,18 +194,24 @@ MLM is ~100x slower than NLP due to neural network inference per word.
 
 ## Supported Languages
 
-### MLM Models (default)
+### Pre-installed (default)
 
 | Language | Model | spaCy |
 |----------|-------|-------|
 | English | roberta-base | en_core_web_sm |
 | French | camembert-base | fr_core_news_sm |
-| German | bert-base-german-cased | de_core_news_sm |
-| Italian | dbmdz/bert-base-italian-cased | it_core_news_sm |
-| Portuguese | neuralmind/bert-base-portuguese-cased | pt_core_news_sm |
-| Chinese | bert-base-chinese | zh_core_web_sm |
 
-Turkish is not a default language: spaCy ships no Turkish pipeline, and every
+### Available via CUSTOM_MLM_MODELS
+
+These languages have LT n-gram support and are mapped in the code, but require
+`CUSTOM_MLM_MODELS` to install their models:
+
+| Language | Model | spaCy |
+|----------|-------|-------|
+| German | bert-base-german-cased | de_core_news_sm |
+| Spanish | dccuchile/bert-base-spanish-wwm-cased | es_core_news_sm |
+
+Turkish is not supported: spaCy ships no Turkish pipeline, and every
 language needs a spaCy pipeline for tokenization and NER.
 
 ### NLP Models (fallback)

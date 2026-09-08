@@ -42,14 +42,14 @@ MAX_SEQ_LENGTH = 512
 class InputTooLongError(ValueError):
     """Raised when the tokenized input exceeds MAX_SEQ_LENGTH for MLM inference."""
 
-# Default supported languages
+# Default supported languages (only en/fr are pre-installed).
+# All LT n-gram languages are mapped; additional languages can be added via
+# CUSTOM_MLM_MODELS at deployment time.
 DEFAULT_LANGUAGES = {
-    "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
     "en": {"model": "roberta-base", "spacy": "en_core_web_sm"},
     "fr": {"model": "camembert-base", "spacy": "fr_core_news_sm"},
-    "it": {"model": "dbmdz/bert-base-italian-cased", "spacy": "it_core_news_sm"},
-    "pt": {"model": "neuralmind/bert-base-portuguese-cased", "spacy": "pt_core_news_sm"},
-    "zh": {"model": "bert-base-chinese", "spacy": "zh_core_web_sm"},
+    "de": {"model": "bert-base-german-cased", "spacy": "de_core_news_sm"},
+    "es": {"model": "dccuchile/bert-base-spanish-wwm-cased", "spacy": "es_core_news_sm"},
 }
 
 # Load custom models from environment variable
@@ -369,7 +369,7 @@ def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sen
         return _compress_text_mode(text, doc, language, drop_ratio, no_adjacent_removal, protect_ner)
     else:
         # Sentence mode: NLP per sentence, MLM per sentence context (default)
-        return _compress_sentence_mode(text, doc, language, preset, drop_ratio, no_adjacent_removal, protect_ner)
+        return _compress_sentence_mode(text, doc, language, preset, drop_ratio, calibrate_from_nlp, no_adjacent_removal, protect_ner)
 
 def _word_char_offsets(text, words):
     """Return (start, end) character offsets for whitespace-split words in text."""
@@ -449,7 +449,7 @@ def _compress_text_mode(text, doc, language, drop_ratio, no_adjacent_removal, pr
     compressed_words = [w for i, w in enumerate(words) if i not in to_remove]
     return " ".join(compressed_words)
 
-def _compress_sentence_mode(text, doc, language, preset, drop_ratio, no_adjacent_removal, protect_ner):
+def _compress_sentence_mode(text, doc, language, preset, drop_ratio, calibrate_from_nlp, no_adjacent_removal, protect_ner):
     """Sentence mode: compress per sentence (default)"""
     import math
     from caveman_compress_nlp import compress_text as compress_text_nlp
@@ -468,24 +468,29 @@ def _compress_sentence_mode(text, doc, language, preset, drop_ratio, no_adjacent
             result_parts.append(sent_text)
             continue
         
-        # Calculate drop_ratio for this sentence
-        sent_drop_ratio = drop_ratio
-        try:
-            nlp_result = compress_text_nlp(sent_text, lang=language)
-            nlp_kept_ratio = len(nlp_result) / len(sent_text) if sent_text else 1.0
-            nlp_drop = 1.0 - nlp_kept_ratio
-            nlp_drop = round(nlp_drop * 10) / 10
-            
-            if preset == "lite":
-                sent_drop_ratio = nlp_drop
-            elif preset == "full":
-                sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 1.5 * 10) / 10)
-            elif preset == "ultra":
-                sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 2 * 10) / 10)
-            else:
-                sent_drop_ratio = nlp_drop
-        except Exception:
-            sent_drop_ratio = drop_ratio  # fallback to global
+        # Only calibrate per-sentence drop_ratio from NLP when no explicit
+        # drop_ratio was provided AND calibration is enabled. Otherwise use
+        # the caller-supplied value unchanged.
+        if drop_ratio is not None or not calibrate_from_nlp:
+            sent_drop_ratio = drop_ratio if drop_ratio is not None else 0.5
+        else:
+            sent_drop_ratio = drop_ratio
+            try:
+                nlp_result = compress_text_nlp(sent_text, lang=language)
+                nlp_kept_ratio = len(nlp_result) / len(sent_text) if sent_text else 1.0
+                nlp_drop = 1.0 - nlp_kept_ratio
+                nlp_drop = round(nlp_drop * 10) / 10
+
+                if preset == "lite":
+                    sent_drop_ratio = nlp_drop
+                elif preset == "full":
+                    sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 1.5 * 10) / 10)
+                elif preset == "ultra":
+                    sent_drop_ratio = min(0.9, math.ceil(nlp_drop * 2 * 10) / 10)
+                else:
+                    sent_drop_ratio = nlp_drop
+            except Exception:
+                sent_drop_ratio = 0.5  # safe fallback
         
         # NER protection: mark whitespace-split words covered by a named entity.
         ner_protected = set()

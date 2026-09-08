@@ -181,6 +181,11 @@ def call_caveman_compress(arguments):
 
     try:
         lang = language or detect_language(text)
+
+        # Reject incompatible language/mode combinations before inference
+        if lang == "zh" and mode == "text":
+            return _invalid_params("Invalid params: 'mode' 'text' is not supported for Chinese (zh); use mode='sentence'")
+
         fallback = False
 
         if method == "nlp":

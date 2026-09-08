@@ -95,6 +95,10 @@ def compress():
         if language is None:
             language = detect_language(text)
 
+        # Reject incompatible language/mode combinations before inference
+        if language == 'zh' and mode == 'text':
+            return jsonify({'error': "'mode' 'text' is not supported for Chinese (zh); use mode='sentence'"}), 400
+
         fallback = False
         if method == 'nlp':
             # Force NLP mode
