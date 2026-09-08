@@ -10,6 +10,11 @@ services:
       - "${PORT:-3000}:${PORT:-3000}"
     environment:
       - PORT=${PORT:-3000}
+      - LANGUAGES=en,fr
+    volumes:
+      - ./hf-cache:/app/.cache/huggingface
+      - ./spacy-cache:/app/.cache/spacy
+      - ./models:/app/models
     restart: unless-stopped
     volumes:
       - ./models:/root/.cache  # Cache models between restarts
