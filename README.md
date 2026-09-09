@@ -7,11 +7,11 @@ MLM-based text compression for LLM context optimization. Fork of [wilpel/caveman
 ## Features
 
 - **MLM compression** using masked language models (RoBERTa for English, CamemBERT for French)
-- **NLP fallback** for languages without MLM models (spaCy-based)
+- **NLP fallback** for active languages when MLM is unavailable (spaCy-based)
 - **Auto language detection** via fastText (170+ languages)
 - **Dynamic presets** calibrated from NLP compression ratio
 - **Sentence or text mode** for different compression contexts
-- **Custom MLM models** via environment variable
+- **Custom MLM models** via build argument
 - **HTTP API** and **MCP server** for integration
 - **Docker support** for easy deployment
 
@@ -19,14 +19,30 @@ MLM-based text compression for LLM context optimization. Fork of [wilpel/caveman
 
 ### Docker
 
+Models are provisioned at build time, so the image is immutable and the
+runtime is offline (it never downloads models). No volumes are mounted.
+
 ```bash
-# Build and run
+# Build (provisions the default en/fr models into the image)
 docker build -t caveman-compression .
-docker run -p 3000:3000 -e LANGUAGES=en,fr caveman-compression
+
+# Run
+docker run -p 3000:3000 caveman-compression
+
+# Build with an additional catalogue language (de/es)
+docker build --build-arg LANGUAGES=en,fr,de -t caveman-compression .
 
 # Or with docker-compose
 docker-compose up -d
 ```
+
+`LANGUAGES` and `CUSTOM_MLM_MODELS` are build arguments, not runtime settings.
+During the build, `download_models.py` provisions the requested models and writes
+a *language manifest* (`/app/models/languages.json`) recording exactly which
+languages were successfully provisioned. The runtime reads that manifest and
+never consults `LANGUAGES`/`CUSTOM_MLM_MODELS` environment variables, so the
+active-language set is frozen to the image. The container runs as a non-root
+user, is fully offline, and performs no model provisioning after build.
 
 ### API Usage
 
@@ -82,8 +98,9 @@ Presets are dynamically calibrated from NLP compression ratio. The NLP compresso
 
 ### Method
 
-- `mlm` (default): Uses MLM when available (en, fr, de, zh, pt, tr, it), NLP fallback for others
-- `nlp`: Force NLP mode (spaCy-based, no MLM)
+- `mlm` (default): Uses MLM for active languages (the ones listed in
+  `LANGUAGES`). Inactive languages are returned unchanged.
+- `nlp`: Force NLP mode (spaCy-based, no MLM) for an active language.
 
 ## Examples
 
@@ -129,14 +146,22 @@ curl -X POST http://localhost:3000/compress \
 
 ## Custom Models
 
-Add custom MLM models via `CUSTOM_MLM_MODELS` environment variable:
+Add custom MLM models via the `CUSTOM_MLM_MODELS` build argument (models are
+provisioned during the build):
 
 ```bash
-docker run -p 3000:3000 \
-  -e LANGUAGES=en,fr,sv \
-  -e CUSTOM_MLM_MODELS='{"sv": {"model": "KB/bert-base-swedish-cased", "spacy": "sv_core_news_sm"}}' \
-  caveman-compression
+docker build \
+  --build-arg LANGUAGES=en,fr,sv \
+  --build-arg CUSTOM_MLM_MODELS='{"sv": {"model": "KB/bert-base-swedish-cased", "spacy": "sv_core_news_sm"}}' \
+  -t caveman-compression .
 ```
+
+Each custom entry must provide both a `model` and a `spacy` pipeline. Entries
+missing either are skipped with a warning, and any language listed in
+`LANGUAGES` without an available spaCy pipeline fails the build instead of
+baking an image that cannot run. Custom models are baked into the image at
+build time and recorded in the language manifest; the runtime never downloads
+models.
 
 ## MCP Server
 
@@ -145,6 +170,7 @@ The MCP server provides the same functionality via the Model Context Protocol:
 ```json
 {
   "jsonrpc": "2.0",
+  "id": 1,
   "method": "tools/call",
   "params": {
     "name": "caveman_compress",
@@ -159,11 +185,16 @@ The MCP server provides the same functionality via the Model Context Protocol:
 
 ## Language Detection
 
-Language detection uses fastText (primary) with spaCy fallback:
+Language detection uses fastText as the primary method, with a word-list
+heuristic fallback (English vs French) when fastText is unavailable or the
+model fails to load:
 
 - **fastText**: Fast, accurate, 170+ languages
-- **spaCy**: Fallback for unsupported languages
-- **Heuristic**: Last resort for unknown text
+- **Word-list heuristic**: Last resort for unknown text (en/fr only)
+
+When neither method can determine a language - including the word-list
+heuristic finding no positive English or French evidence - the text is
+returned unchanged rather than being misclassified.
 
 ## Performance
 
@@ -177,29 +208,50 @@ MLM is ~100x slower than NLP due to neural network inference per word.
 
 ## Supported Languages
 
-### MLM Models (default)
+The MLM languages are controlled by the `LANGUAGES` build argument (default
+`en,fr`). Only languages listed there are provisioned at build time and
+activated at runtime (via the baked-in language manifest). Inactive languages -
+including catalogue languages not listed in `LANGUAGES` and unknown codes - are
+returned unchanged (no compression and no NLP fallback).
 
-| Language | Model | spaCy |
-|----------|-------|-------|
-| English | roberta-base | en_core_web_sm |
-| French | camembert-base | fr_core_news_sm |
-| German | bert-base-german-cased | de_core_news_sm |
-| Italian | dbmdz/bert-base-italian-cased | it_core_news_sm |
-| Portuguese | neuralmind/bert-base-portuguese-cased | pt_core_news_sm |
-| Turkish | dbmdz/bert-base-turkish-cased | tr_core_news_sm |
-| Chinese | bert-base-chinese | zh_core_web_sm |
+### Catalogue (LT n-gram)
+
+The full catalogue is defined in `language_catalog.py` and maps each language
+to an MLM model and a spaCy pipeline:
+
+| Language | Model | spaCy | Default |
+|----------|-------|-------|---------|
+| English | roberta-base | en_core_web_sm | yes |
+| French | camembert-base | fr_core_news_sm | yes |
+| German | bert-base-german-cased | de_core_news_sm | no |
+| Spanish | dccuchile/bert-base-spanish-wwm-cased | es_core_news_sm | no |
+
+Enable `de`/`es` by listing them in `LANGUAGES` (e.g.
+`--build-arg LANGUAGES=en,fr,de`); no `CUSTOM_MLM_MODELS` is required because
+they are already in the catalogue. Turkish is not supported: spaCy ships no
+Turkish pipeline, and every language needs a spaCy pipeline for tokenization
+and NER.
 
 ### NLP Models (fallback)
 
-spaCy models for 15+ languages with multilingual fallback.
+spaCy models for 15+ languages with multilingual fallback, used when
+`method=nlp` is requested for an active language or MLM is unavailable for an
+active language.
 
 ## Environment Variables
 
+`LANGUAGES` and `CUSTOM_MLM_MODELS` are **build arguments only** (see above).
+They are consumed during `docker build`, and the result is recorded in the
+language manifest baked into the image. They are *not* read at runtime, so a
+running container's active-language set cannot be changed by setting environment
+variables. The only runtime environment variable is `PORT`.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LANGUAGES` | `en,fr` | Comma-separated languages to download |
-| `CUSTOM_MLM_MODELS` | `{}` | JSON object with custom model definitions |
-| `PORT` | `3000` | HTTP server port |
+| `LANGUAGES` | `en,fr` | Languages provisioned at build time (build argument) |
+| `CUSTOM_MLM_MODELS` | (empty) | JSON mapping of custom language codes to `{"model": ..., "spacy": ...}` (build argument) |
+| `LANGUAGE_MANIFEST_PATH` | `/app/models/languages.json` | Location of the baked-in language manifest (local-dev override) |
+| `PORT` | `3000` | HTTP server port (honored by the gunicorn bind and the health check) |
 
 ## API Endpoints
 
