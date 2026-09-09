@@ -8,28 +8,9 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-<<<<<<< HEAD
       # Languages to download models for (comma-separated)
       # Default: "en,fr" (RoBERTa + CamemBERT)
       - LANGUAGES=en,fr
-      
-      # Custom MLM models (optional)
-      # Format: "lang:huggingface-model,lang:huggingface-model"
-      # Example: "de:bert-base-german-cased,es:dccuchile/bert-base-spanish-wwm-cased"
-      # - CUSTOM_MLM_MODELS=de:bert-base-german-cased
-      
-      # Custom spaCy models (optional)
-      # Format: "lang:spacy-model,lang:spacy-model"
-      # Example: "de:de_core_news_sm,es:es_core_news_sm"
-      # - CUSTOM_SPACY_MODELS=de:de_core_news_sm
-    restart: unless-stopped
-    volumes:
-      # Cache HuggingFace models between restarts
-      - ./hf-cache:/root/.cache/huggingface
-      # Cache spaCy models between restarts
-      - ./spacy-cache:/root/.cache/spacy
-=======
     restart: unless-stopped
     volumes:
       - ./models:/root/.cache  # Cache models between restarts
->>>>>>> main
