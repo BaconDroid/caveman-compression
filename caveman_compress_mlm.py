@@ -287,14 +287,17 @@ def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sen
         return text
 
     # Paragraph mode: split text into paragraphs, compress each paragraph
-    # using sentence mode, then rejoin with double newlines
+    # as a full text unit (mode="text"), then rejoin with double newlines.
+    # This ensures:
+    # - For MLM: words are evaluated in paragraph context (not split into sentences)
+    # - For NLP: stop words/auxiliaries are removed from the full paragraph
     if mode == "paragraph":
         paragraphs = text.split("\n\n")
         compressed_paragraphs = []
         for para in paragraphs:
             compressed_para = compress_text(
                 para, language=language, drop_ratio=drop_ratio,
-                preset=preset, mode="sentence",
+                preset=preset, mode="text",
                 calibrate_from_nlp=calibrate_from_nlp,
                 no_adjacent_removal=no_adjacent_removal,
                 protect_ner=protect_ner,
