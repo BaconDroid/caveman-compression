@@ -32,7 +32,7 @@ MAX_CONTENT_LENGTH = 64 * 1024
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 PRESETS = ("lite", "full", "ultra")
-MODES = ("sentence", "text")
+MODES = ("sentence", "paragraph", "text")
 METHODS = ("mlm", "nlp")
 
 
