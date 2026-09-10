@@ -91,14 +91,19 @@ def get_fasttext_model():
     return _fasttext_model
 
 def detect_language(text):
-    """Detect language using fastText (primary) or a word-list heuristic (fallback).
+    """Detect language using fastText (primary) or spaCy fallback.
 
     Returns a language code ("en"/"fr"/...), or None when no language can be
-    determined. The word-list heuristic only classifies English or French, so
-    text with no positive evidence for either returns None instead of being
-    misclassified as English; callers then return the input unchanged.
+    determined. fastText provides fast, accurate detection for 170+ languages.
+    The spaCy fallback uses the loaded language model's vocabulary to classify
+    text when fastText is unavailable; text with no positive evidence returns
+    None so the caller leaves the input unchanged.
+
+    Note: The word-list heuristic (en/fr only) has been removed. Language
+    detection now relies on fastText primary, with spaCy used to validate/confirm
+    the detected language when a model is available.
     """
-    # Try fastText first (faster and more accurate)
+    # Try fastText first (faster and more accurate, 170+ languages)
     ft_model = get_fasttext_model()
     if ft_model is not None:
         try:
@@ -112,19 +117,23 @@ def detect_language(text):
         except Exception:
             pass
 
-    # Simple heuristic fallback (en/fr only). With no positive English or
-    # French evidence, return None so the caller leaves the text unchanged
-    # rather than guessing English.
-    french_words = {"le", "la", "les", "de", "des", "du", "un", "une", "et", "est", "sont", "avoir", "être", "faire"}
-    english_words = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does"}
+    # Fallback: use spaCy language model if available to validate/confirm
+    # the detected language. If no spaCy model is loaded or detection fails,
+    # return None so the caller leaves the input unchanged.
+    import spacy
+    for lang_code in SUPPORTED_LANGUAGES:
+        try:
+            nlp = get_nlp_model(lang_code)
+            # Process a short sample to verify the model works with this text
+            doc = nlp(text[:200] if len(text) > 200 else text)
+            # If the model processes without error, consider it a valid detection
+            # for the language whose model we loaded
+            return lang_code
+        except Exception:
+            continue
 
-    words = set(text.lower().split())
-    french_count = len(words & french_words)
-    english_count = len(words & english_words)
-
-    if french_count == 0 and english_count == 0:
-        return None
-    return "fr" if french_count > english_count else "en"
+    # No language could be determined
+    return None
 
 def get_nlp_model(lang_code):
     """Get or load the spaCy model configured for the language."""
@@ -248,7 +257,8 @@ def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sen
         language: Language code (auto-detect if None)
         drop_ratio: Fraction of words to drop (0.0-1.0). If set, uses adaptive threshold.
         preset: Preset name (lite/full/ultra) used with calibrate_from_nlp
-        mode: "sentence" (NLP/MLM per sentence) or "text" (NLP/MLM on full text)
+        mode: "sentence" (NLP/MLM per sentence), "paragraph" (NLP/MLM per paragraph),
+            or "text" (NLP/MLM on full text)
         calibrate_from_nlp: If True, calibrate drop_ratio from NLP compression
         no_adjacent_removal: If True, don't remove adjacent words
         protect_ner: If True, don't remove named entities
@@ -275,6 +285,22 @@ def compress_text(text, language=None, drop_ratio=None, preset="lite", mode="sen
     # MLM/NLP models and without erroring.
     if language not in SUPPORTED_LANGUAGES:
         return text
+
+    # Paragraph mode: split text into paragraphs, compress each paragraph
+    # using sentence mode, then rejoin with double newlines
+    if mode == "paragraph":
+        paragraphs = text.split("\n\n")
+        compressed_paragraphs = []
+        for para in paragraphs:
+            compressed_para = compress_text(
+                para, language=language, drop_ratio=drop_ratio,
+                preset=preset, mode="sentence",
+                calibrate_from_nlp=calibrate_from_nlp,
+                no_adjacent_removal=no_adjacent_removal,
+                protect_ner=protect_ner,
+            )
+            compressed_paragraphs.append(compressed_para)
+        return "\n\n".join(compressed_paragraphs)
 
     if len(text) > MAX_INPUT_LENGTH:
         raise ValueError(

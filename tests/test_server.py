@@ -140,8 +140,12 @@ class ServerBoundaryTest(unittest.TestCase):
         r = self.client.post("/compress", json={"text": "hello", "preset": 5})
         self.assertEqual(r.status_code, 400)
 
+    def test_paragraph_mode_valid(self):
+        r = self.client.post("/compress", json={"text": "hello world", "mode": "paragraph"})
+        self.assertEqual(r.status_code, 200)
+
     def test_invalid_mode(self):
-        r = self.client.post("/compress", json={"text": "hello", "mode": "paragraph"})
+        r = self.client.post("/compress", json={"text": "hello", "mode": "invalid_mode"})
         self.assertEqual(r.status_code, 400)
 
     def test_invalid_method(self):
